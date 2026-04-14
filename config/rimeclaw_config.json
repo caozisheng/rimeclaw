@@ -1,0 +1,51 @@
+{
+  "system": {
+    "name": "rimeclaw",
+    "log_level": "error",
+    "home": ""
+  },
+  "agent": {
+    "model": "minimax/MiniMax-M2.7-highspeed",
+    "max_iterations": 5,
+    "temperature": 0.5,
+    "max_tokens": 8192,
+    "context_window": 204800,
+    "thinking": "off",
+    "auto_compact": true,
+    "fallbacks": [
+      "minimax/MiniMax-M2.7"
+    ]
+  },
+  "providers": {
+    "minimax": {
+      "api": "openai-completions",
+      "api_key": "YOUR_API_KEY",
+      "base_url": "https://api.minimax.io/v1",
+      "timeout": 30
+    }
+  },
+  "security": {
+    "permission_level": "auto",
+    "allow_local_execute": true
+  },
+  "tools": {
+    "allow": [
+      "group:fs",
+      "group:runtime",
+      "exec",
+      "bash",
+      "my_test_tool"
+    ],
+    "deny": [
+      "message"
+    ],
+    "exec": {
+      "ask": "on_miss",
+      "timeout": 30,
+      "allowlist": [
+        "git *",
+        "cmake *"
+      ]
+    }
+  }
+}

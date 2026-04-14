@@ -1,0 +1,5 @@
+# RimeClaw Test Data
+
+This file is used by the rimeclaw test suite.
+RimeClaw is an agent runtime framework.
+
