@@ -99,8 +99,11 @@ git clone https://github.com/microsoft/vcpkg.git
 2. cmake
 
   cmake --preset build-lib        # only lib
+  
   cmake --preset build-test       # lib + test
+  
   cmake --preset build-dashboard  # lib + dashboard(GUI)
+  
   cmake --preset build-all        # all
 
   cmake --build --preset build-lib  # build
