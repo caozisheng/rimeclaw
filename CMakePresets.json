@@ -1,0 +1,117 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "base-win",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "base-unix",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "build-lib",
+      "displayName": "Build Library Only",
+      "description": "Build librimeclaw only (core dependencies)",
+      "inherits": ["base-win", "base-unix"],
+      "binaryDir": "${sourceDir}/build-lib",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-lib",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build-lib/installed",
+        "RIMECLAW_BUILD_TEST": "OFF",
+        "RIMECLAW_BUILD_DASHBOARD": "OFF"
+      }
+    },
+    {
+      "name": "build-test",
+      "displayName": "Build Library + Test",
+      "description": "Build librimeclaw and test executable",
+      "inherits": ["base-win", "base-unix"],
+      "binaryDir": "${sourceDir}/build-test",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-test",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build-test/installed",
+        "RIMECLAW_BUILD_TEST": "ON",
+        "RIMECLAW_BUILD_DASHBOARD": "OFF"
+      }
+    },
+    {
+      "name": "build-dashboard",
+      "displayName": "Build Library + Dashboard",
+      "description": "Build librimeclaw and dashboard GUI",
+      "inherits": ["base-win", "base-unix"],
+      "binaryDir": "${sourceDir}/build-dashboard",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-dashboard",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build-dashboard/installed",
+        "RIMECLAW_BUILD_TEST": "OFF",
+        "RIMECLAW_BUILD_DASHBOARD": "ON"
+      }
+    },
+    {
+      "name": "build-all",
+      "displayName": "Build All",
+      "description": "Build librimeclaw, test, and dashboard",
+      "inherits": ["base-win", "base-unix"],
+      "binaryDir": "${sourceDir}/build-all",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-all",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/build-all/installed",
+        "RIMECLAW_BUILD_TEST": "ON",
+        "RIMECLAW_BUILD_DASHBOARD": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-lib",
+      "displayName": "Build Library Only",
+      "configurePreset": "build-lib"
+    },
+    {
+      "name": "build-test",
+      "displayName": "Build Library + Test",
+      "configurePreset": "build-test"
+    },
+    {
+      "name": "build-dashboard",
+      "displayName": "Build Library + Dashboard",
+      "configurePreset": "build-dashboard"
+    },
+    {
+      "name": "build-all",
+      "displayName": "Build All",
+      "configurePreset": "build-all"
+    }
+  ]
+}

@@ -89,7 +89,7 @@ Third-party dependencies of rimeclaw lib includes
 · nlohmann-json-3.12.0
 · spdlog-1.16.0
 
-Build system uses [vcpkg] (https://github.com/microsoft/vcpkg) to manage dependencies.
+Build system uses [vcpkg](https://github.com/microsoft/vcpkg) to manage dependencies.
 
 To build from source,
 
