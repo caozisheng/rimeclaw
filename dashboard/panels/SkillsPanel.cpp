@@ -1,6 +1,7 @@
 #include "SkillsPanel.h"
 #include "../DashboardTheme.h"
 #include "../DashboardController.h"
+#include <cstring>
 
 namespace rimeclaw {
 
