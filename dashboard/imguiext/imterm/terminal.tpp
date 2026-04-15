@@ -20,6 +20,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cstring>
 #include <map>
 #include <optional>
 #include <iterator>
