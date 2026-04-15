@@ -99,7 +99,7 @@ To build from source,
 1. install vcpkg and set $ENV{VCPKG_ROOT} as 
 git clone https://github.com/microsoft/vcpkg.git
 
-2. cmake
+2. cmake preset
 
   cmake --preset build-lib        # only lib
   
@@ -108,12 +108,17 @@ git clone https://github.com/microsoft/vcpkg.git
   cmake --preset build-dashboard  # lib + dashboard(GUI)
   
   cmake --preset build-all        # all
+ 
+3. config provider
 
+change providers (current Minimax) and "agent.model" of "config/rimeclaw_config.json", use your own API-KEY.
 
-  cmake --build --preset build-lib  # build
-  
-3. download models
+4. download local models (optional) supported by llama.cpp
 
 download GGUF model and put it into `3rd/models/`
 - Qwen2.5-0.5B-Instruct-Q4_K_M
-  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf  
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+  
+5. build
+
+cmake --build --preset build-all  
