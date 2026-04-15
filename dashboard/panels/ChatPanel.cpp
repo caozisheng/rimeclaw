@@ -1,6 +1,7 @@
 #include "ChatPanel.h"
 #include "../DashboardTheme.h"
 #include "../DashboardController.h"
+#include <cmath>
 #include <cstring>
 
 namespace rimeclaw {
@@ -211,7 +212,7 @@ void ChatPanel::renderMessageBubble(DashboardState& state, const ChatMessage& ms
     // Streaming cursor
     if (msg.isStreaming) {
         float time = (float)ImGui::GetTime();
-        float alpha = 0.5f + 0.5f * sinf(time * 6.0f);
+        float alpha = 0.5f + 0.5f * std::sin(time * 6.0f);
         ImU32 cursorCol = IM_COL32(226, 228, 236, (int)(alpha * 255));
         ImVec2 cPos = ImGui::GetCursorScreenPos();
         draw->AddRectFilled(cPos, ImVec2(cPos.x + 8, cPos.y + 16), cursorCol);
