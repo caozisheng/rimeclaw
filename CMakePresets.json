@@ -18,32 +18,10 @@
       }
     },
     {
-      "name": "base-win",
-      "hidden": true,
-      "inherits": "base",
-      "generator": "Visual Studio 17 2022",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      }
-    },
-    {
-      "name": "base-unix",
-      "hidden": true,
-      "inherits": "base",
-      "generator": "Ninja",
-      "condition": {
-        "type": "notEquals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      }
-    },
-    {
       "name": "build-lib",
       "displayName": "Build Library Only",
       "description": "Build librimeclaw only (core dependencies)",
-      "inherits": ["base-win", "base-unix"],
+      "inherits": "base",
       "binaryDir": "${sourceDir}/build-lib",
       "cacheVariables": {
         "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-lib",
@@ -56,7 +34,7 @@
       "name": "build-test",
       "displayName": "Build Library + Test",
       "description": "Build librimeclaw and test executable",
-      "inherits": ["base-win", "base-unix"],
+      "inherits": "base",
       "binaryDir": "${sourceDir}/build-test",
       "cacheVariables": {
         "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-test",
@@ -69,7 +47,7 @@
       "name": "build-dashboard",
       "displayName": "Build Library + Dashboard",
       "description": "Build librimeclaw and dashboard GUI",
-      "inherits": ["base-win", "base-unix"],
+      "inherits": "base",
       "binaryDir": "${sourceDir}/build-dashboard",
       "cacheVariables": {
         "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-dashboard",
@@ -82,7 +60,7 @@
       "name": "build-all",
       "displayName": "Build All",
       "description": "Build librimeclaw, test, and dashboard",
-      "inherits": ["base-win", "base-unix"],
+      "inherits": "base",
       "binaryDir": "${sourceDir}/build-all",
       "cacheVariables": {
         "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-all",

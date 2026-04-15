@@ -1,7 +1,7 @@
 # rimeclaw
 An embedded claw library by c++, forked and simplified from [QuantClaw](https://github.com/QuantClaw/QuantClaw).
 
-If you're looking for a lightweight, low-dependency, cross-platform C++ agent library that's easy to integrate into any project, this is for you.
+If you're looking for a light-weight, low-dependency, cross-platform C++ agent library that's easy to integrate into any project, this is for you.
 
 # Introduction
 
@@ -85,8 +85,11 @@ C API
 ## Installation from source
 
 Third-party dependencies of rimeclaw lib includes
+
 · curl-8.17.0
+
 · nlohmann-json-3.12.0
+
 · spdlog-1.16.0
 
 Build system uses [vcpkg](https://github.com/microsoft/vcpkg) to manage dependencies.
@@ -105,5 +108,6 @@ git clone https://github.com/microsoft/vcpkg.git
   cmake --preset build-dashboard  # lib + dashboard(GUI)
   
   cmake --preset build-all        # all
+
 
   cmake --build --preset build-lib  # build
