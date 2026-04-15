@@ -100,8 +100,9 @@ struct ProviderConfig {
   std::string api;  // "openai-completions", "anthropic-messages"
   std::string proxy;  // HTTP proxy URL (e.g. "http://127.0.0.1:7897")
   int timeout = kDefaultProviderTimeoutSec;
-  std::vector<ModelDefinition> models;      // Per-provider model definitions
-  std::vector<AuthProfileConfig> profiles;  // Multi-key rotation
+  nlohmann::json extra;                       // Provider-specific settings
+  std::vector<ModelDefinition> models;        // Per-provider model definitions
+  std::vector<AuthProfileConfig> profiles;    // Multi-key rotation
 
   static ProviderConfig FromJson(const nlohmann::json& node);
 };

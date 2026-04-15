@@ -346,10 +346,10 @@ std::string ToolRegistry::ExecuteTool(const std::string& tool_name,
   if (!check_permission(tool_name))
     throw std::runtime_error("Permission denied: tool '" + tool_name +
                              "' is not allowed");
-  spdlog::debug("Executing tool: {} params: {}", tool_name, parameters.dump());
+  spdlog::info("Executing tool: {} params: {}", tool_name, parameters.dump());
   try {
     auto result = tools_[tool_name](parameters);
-    spdlog::debug("Tool {} succeeded", tool_name);
+    spdlog::info("Tool {} completed ({} chars)", tool_name, result.size());
     return result;
   } catch (const std::exception& e) {
     spdlog::error("Tool {} failed: {}", tool_name, e.what());
@@ -452,8 +452,19 @@ std::string ToolRegistry::exec_tool(const nlohmann::json& params) {
   if (!params.contains("command"))
     throw std::runtime_error("Missing required parameter: command");
   std::string command = params["command"].get<std::string>();
-  int timeout = params.value("timeout", 30);
-  std::string workdir = params.value("workdir", "");
+
+  // Handle null / missing values defensively — small LLMs frequently emit
+  // "timeout": 0 or "workdir": null which trip nlohmann::json type checks.
+  int timeout = 30;
+  if (params.contains("timeout") && params["timeout"].is_number()) {
+    timeout = params["timeout"].get<int>();
+  }
+  if (timeout < 1) timeout = 1;  // avoid INFINITE wait in exec_capture
+
+  std::string workdir;
+  if (params.contains("workdir") && params["workdir"].is_string()) {
+    workdir = params["workdir"].get<std::string>();
+  }
 
   // Default empty workdir to workspace so commands run inside sandbox
   if (workdir.empty()) {

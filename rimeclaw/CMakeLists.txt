@@ -40,6 +40,11 @@ target_link_libraries(librimeclaw PUBLIC
     Threads::Threads
 )
 
+if(BUILD_LLAMA_LOCAL_PROVIDER)
+    target_link_libraries(librimeclaw PUBLIC llama)
+    target_compile_definitions(librimeclaw PUBLIC BUILD_LLAMA_LOCAL_PROVIDER=1)
+endif()
+
 set_target_properties(librimeclaw PROPERTIES
     OUTPUT_NAME "rimeclaw"
     ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib

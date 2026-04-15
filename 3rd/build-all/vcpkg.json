@@ -33,6 +33,10 @@
     {
       "name": "spdlog",
       "version>=": "1.16.0#1"
+    },
+    {
+      "name": "llama-cpp",
+      "default-features": false
     }
   ],
   "builtin-baseline": "6bc1613f18f850c60d906575296f982c6dfcc9e0"

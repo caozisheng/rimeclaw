@@ -83,3 +83,13 @@ add_custom_command(TARGET dashboard POST_BUILD
         "${CMAKE_SOURCE_DIR}/config/.rimeclaw"
         "$<TARGET_FILE_DIR:dashboard>/.rimeclaw"
 )
+
+# Copy GGUF models to dashboard output directory when local provider is enabled
+if(BUILD_LLAMA_LOCAL_PROVIDER)
+    add_custom_command(TARGET dashboard POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/3rd/models"
+            "$<TARGET_FILE_DIR:dashboard>/models"
+        COMMENT "Copying GGUF models to dashboard output directory"
+    )
+endif()

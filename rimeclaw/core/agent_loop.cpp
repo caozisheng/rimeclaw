@@ -355,8 +355,15 @@ std::vector<Message> AgentLoop::ProcessMessage(
         spdlog::warn("Provider error ({}), attempting failover: {}",
                      ProviderErrorKindToString(pe.Kind()), pe.what());
 
-        // Restore original model for re-resolution
-        auto new_provider = resolve_provider();
+        // Restore original model for re-resolution.
+        // Guard: resolve_provider() may throw if fallback provider
+        // construction fails (e.g. missing model_path for local provider).
+        std::shared_ptr<LLMProvider> new_provider;
+        try {
+          new_provider = resolve_provider();
+        } catch (const std::exception& re) {
+          spdlog::error("Failover provider construction failed: {}", re.what());
+        }
         if (new_provider && new_provider != provider) {
           provider = new_provider;
           // Update the request model to the newly resolved model
@@ -654,7 +661,14 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
         spdlog::warn("Streaming provider error ({}), attempting failover: {}",
                      ProviderErrorKindToString(pe.Kind()), pe.what());
 
-        auto new_provider = resolve_provider();
+        // Guard: resolve_provider() may throw if fallback provider
+        // construction fails (e.g. missing model_path for local provider).
+        std::shared_ptr<LLMProvider> new_provider;
+        try {
+          new_provider = resolve_provider();
+        } catch (const std::exception& re) {
+          spdlog::error("Failover provider construction failed: {}", re.what());
+        }
         if (new_provider && new_provider != provider) {
           provider = new_provider;
           request.model = resolved_request_model_;

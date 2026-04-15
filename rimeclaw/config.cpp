@@ -170,6 +170,9 @@ ProviderConfig ProviderConfig::FromJson(const nlohmann::json& node) {
   config.api = json_value<std::string>(node, "api", "");
   config.proxy = json_value<std::string>(node, "proxy", "");
   config.timeout = json_value(node, "timeout", kDefaultProviderTimeoutSec);
+  if (node.contains("extra") && node["extra"].is_object()) {
+    config.extra = node["extra"];
+  }
   if (node.contains("models") && node["models"].is_array()) {
     for (const auto& item : node["models"]) {
       config.models.push_back(ModelDefinition::FromJson(item));

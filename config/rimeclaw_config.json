@@ -13,7 +13,7 @@
     "thinking": "off",
     "auto_compact": true,
     "fallbacks": [
-      "minimax/MiniMax-M2.7"
+      "local"
     ]
   },
   "providers": {
@@ -22,6 +22,16 @@
       "api_key": "YOUR_API_KEY",
       "base_url": "https://api.minimax.io/v1",
       "timeout": 30
+    },
+    "local": {
+      "api": "local",
+      "extra": {
+        "model_path": "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "n_ctx": 4096,
+        "n_gpu_layers": 0,
+        "n_threads": 0,
+        "n_batch": 512
+      }
     }
   },
   "security": {

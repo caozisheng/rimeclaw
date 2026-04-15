@@ -146,6 +146,32 @@ RimeClawHandle claw_init(const char* config_path) {
     }
   }
 
+  // Resolve relative model_path in local provider config to absolute path.
+  // Rules: home non-empty → relative to home, home="" → relative to config dir,
+  //        home absent → relative to ~/
+  for (auto& [id, prov] : ctx->config.providers) {
+    if (prov.extra.contains("model_path")) {
+      std::string mp = prov.extra.value("model_path", "");
+      if (!mp.empty() && std::filesystem::path(mp).is_relative()) {
+        std::filesystem::path base;
+        if (ctx->config.system.home.has_value()) {
+          if (ctx->config.system.home->empty()) {
+            base = std::filesystem::path(config_path).parent_path();
+          } else {
+            base = std::filesystem::path(*ctx->config.system.home);
+          }
+        } else {
+          base = rimeclaw::RimeClawConfig::ExpandHome("~");
+        }
+        std::error_code ec;
+        auto abs = std::filesystem::weakly_canonical(base / mp, ec);
+        if (!ec) {
+          prov.extra["model_path"] = abs.string();
+        }
+      }
+    }
+  }
+
   ctx->provider_registry = std::make_shared<rimeclaw::ProviderRegistry>();
   ctx->provider_registry->RegisterBuiltinFactories();
   ctx->provider_registry->LoadModelProviders(ctx->config.providers);
@@ -420,13 +446,19 @@ int claw_send_msg(RimeClawHandle handle, const char* session_key,
   rimeclaw::AgentEventCallback event_cb;
   if (callback) {
     event_cb = [callback, userdata](const rimeclaw::AgentEvent& ev) {
-      const std::string data_str = ev.data.is_null()
-                                       ? ""
-                                       : (ev.data.is_string()
-                                              ? ev.data.get<std::string>()
-                                              : ev.data.dump());
-      callback(ev.type.c_str(),
-               ev.data.is_null() ? nullptr : data_str.c_str(), userdata);
+      try {
+        const std::string data_str = ev.data.is_null()
+                                         ? ""
+                                         : (ev.data.is_string()
+                                                ? ev.data.get<std::string>()
+                                                : ev.data.dump());
+        callback(ev.type.c_str(),
+                 ev.data.is_null() ? nullptr : data_str.c_str(), userdata);
+      } catch (const std::exception& e) {
+        spdlog::error("[rimeclaw] event callback exception: {}", e.what());
+      } catch (...) {
+        spdlog::error("[rimeclaw] event callback unknown exception");
+      }
     };
   }
 
@@ -443,6 +475,12 @@ int claw_send_msg(RimeClawHandle handle, const char* session_key,
     spdlog::error("[rimeclaw] ProcessMessage error: {}", e.what());
     if (callback) {
       callback("error", e.what(), userdata);
+    }
+    return -1;
+  } catch (...) {
+    spdlog::error("[rimeclaw] ProcessMessage unknown exception (non-std)");
+    if (callback) {
+      callback("error", "Unknown internal error", userdata);
     }
     return -1;
   }

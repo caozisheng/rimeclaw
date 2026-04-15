@@ -111,3 +111,9 @@ git clone https://github.com/microsoft/vcpkg.git
 
 
   cmake --build --preset build-lib  # build
+  
+3. download models
+
+download GGUF model and put it into `3rd/models/`
+- Qwen2.5-0.5B-Instruct-Q4_K_M
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf  

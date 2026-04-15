@@ -42,6 +42,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(RIMECLAW_BUILD_TEST "Build test executable" ON)
 option(RIMECLAW_BUILD_DASHBOARD "Build dashboard executable" ON)
+option(BUILD_LLAMA_LOCAL_PROVIDER "Enable local LLM inference via llama.cpp" ON)
 
 # ============================================================================
 # Compiler Configuration

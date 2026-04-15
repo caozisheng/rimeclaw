@@ -11,6 +11,10 @@
 #include "rimeclaw/providers/anthropic_provider.hpp"
 #include "rimeclaw/providers/openai_provider.hpp"
 
+#ifdef BUILD_LLAMA_LOCAL_PROVIDER
+#include "rimeclaw/providers/llama_local_provider.hpp"
+#endif
+
 namespace rimeclaw {
 
 // --- ModelRef ---
@@ -93,6 +97,29 @@ void ProviderRegistry::RegisterBuiltinFactories() {
         entry.base_url.empty() ? "https://api.together.xyz/v1" : entry.base_url;
     return std::make_shared<OpenAIProvider>(entry.api_key, url, entry.timeout, entry.proxy);
   });
+
+#ifdef BUILD_LLAMA_LOCAL_PROVIDER
+  // Local inference via llama.cpp
+  RegisterFactory("local", [](const ProviderEntry& entry) {
+    LlamaLocalConfig cfg;
+    if (!entry.extra.empty()) {
+      cfg = LlamaLocalConfig::FromExtra(entry.extra);
+    } else {
+      spdlog::error("Local provider entry has empty extra (id='{}', api='{}')",
+                    entry.id, entry.api);
+    }
+    // Allow model_path override from base_url (convenience)
+    if (cfg.model_path.empty() && !entry.base_url.empty()) {
+      cfg.model_path = entry.base_url;
+    }
+    if (cfg.model_path.empty()) {
+      spdlog::error("Local provider model_path is empty after resolution "
+                    "(extra={}, base_url='{}')",
+                    entry.extra.dump(), entry.base_url);
+    }
+    return std::make_shared<LlamaLocalProvider>(cfg);
+  });
+#endif
 }
 
 void ProviderRegistry::AddProvider(const ProviderEntry& entry) {
@@ -160,6 +187,13 @@ ProviderRegistry::ResolveModel(const std::string& raw,
   auto it = alias_map_.find(raw);
   if (it != alias_map_.end()) {
     return ModelRef::parse(it->second, default_provider);
+  }
+  // If the raw string has no '/' and matches a known provider, treat it as
+  // provider-only (e.g. "local" → {provider:"local", model:""})
+  if (raw.find('/') == std::string::npos) {
+    if (factories_.count(raw) > 0 || entries_.count(raw) > 0) {
+      return ModelRef{raw, ""};
+    }
   }
   return ModelRef::parse(raw, default_provider);
 }
@@ -309,6 +343,9 @@ void ProviderRegistry::LoadModelProviders(
       if (prov.timeout > 0) {
         it->second.timeout = prov.timeout;
       }
+      if (!prov.extra.empty()) {
+        it->second.extra = prov.extra;
+      }
     } else {
       // Create new entry
       ProviderEntry entry;
@@ -319,6 +356,7 @@ void ProviderRegistry::LoadModelProviders(
       entry.api = prov.api;
       entry.proxy = prov.proxy;
       entry.timeout = prov.timeout;
+      entry.extra = prov.extra;
       entry.models = prov.models;
 
       // Resolve API key from env if needed
@@ -424,6 +462,8 @@ ProviderRegistry::resolve_factory_from_api(const std::string& api) const {
     return "together";
   if (api == "bedrock")
     return "bedrock";
+  if (api == "local" || api == "llamacpp" || api == "llama.cpp")
+    return "local";
   return "";
 }
 

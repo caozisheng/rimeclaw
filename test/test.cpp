@@ -31,6 +31,11 @@
 #include "rimeclaw/tools/tool_chain.hpp"
 #include "rimeclaw/tools/tool_registry.hpp"
 
+// Local provider (optional)
+#ifdef BUILD_LLAMA_LOCAL_PROVIDER
+#include "rimeclaw/providers/llama_local_provider.hpp"
+#endif
+
 namespace fs = std::filesystem;
 
 static int g_passed = 0;
@@ -1167,6 +1172,270 @@ static void test_extended_circuits_init() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Group F: Local Provider Tests (llama.cpp, requires BUILD_LLAMA_LOCAL_PROVIDER)
+// ════════════════════════════════════════════════════════════════════════════
+
+#ifdef BUILD_LLAMA_LOCAL_PROVIDER
+
+static const char* GGUF_MODEL_PATH = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+
+// F1: Model loading — verify provider can load the GGUF model
+static void test_local_provider_load() {
+	printf("[test_local_provider_load]\n");
+
+	if (!fs::exists(GGUF_MODEL_PATH)) {
+		printf("  SKIP: model file not found: %s\n", GGUF_MODEL_PATH);
+		return;
+	}
+
+	rimeclaw::LlamaLocalConfig cfg;
+	cfg.model_path = GGUF_MODEL_PATH;
+	cfg.n_ctx = 2048;
+
+	try {
+		rimeclaw::LlamaLocalProvider provider(cfg);
+		EXPECT_TRUE(provider.GetProviderName() == "local");
+		EXPECT_TRUE(!provider.GetSupportedModels().empty());
+	} catch (const std::exception& e) {
+		printf("  \033[31mFAIL\033[0m: exception: %s\n", e.what());
+		++g_failed;
+	}
+}
+
+// F2: Simple completion — verify provider can generate text
+static void test_local_provider_completion() {
+	printf("[test_local_provider_completion]\n");
+
+	if (!fs::exists(GGUF_MODEL_PATH)) {
+		printf("  SKIP: model file not found: %s\n", GGUF_MODEL_PATH);
+		return;
+	}
+
+	rimeclaw::LlamaLocalConfig cfg;
+	cfg.model_path = GGUF_MODEL_PATH;
+	cfg.n_ctx = 2048;
+
+	try {
+		rimeclaw::LlamaLocalProvider provider(cfg);
+
+		rimeclaw::ChatCompletionRequest req;
+		req.messages.push_back(rimeclaw::Message("user", "Say hello in one word."));
+		req.max_tokens = 32;
+		req.temperature = 0.0;
+
+		auto resp = provider.ChatCompletion(req);
+		printf("  Response: %s\n", resp.content.c_str());
+		printf("  Tokens: prompt=%d completion=%d\n",
+			resp.usage.prompt_tokens, resp.usage.completion_tokens);
+
+		EXPECT_TRUE(!resp.content.empty());
+		EXPECT_TRUE(resp.usage.prompt_tokens > 0);
+		EXPECT_TRUE(resp.usage.completion_tokens > 0);
+		EXPECT_TRUE(resp.finish_reason == "stop" || resp.finish_reason == "length");
+	} catch (const std::exception& e) {
+		printf("  \033[31mFAIL\033[0m: exception: %s\n", e.what());
+		++g_failed;
+	}
+}
+
+// F3: Tool use — verify provider can generate tool calls with Qwen3 format
+static void test_local_provider_tool_use() {
+	printf("[test_local_provider_tool_use]\n");
+
+	if (!fs::exists(GGUF_MODEL_PATH)) {
+		printf("  SKIP: model file not found: %s\n", GGUF_MODEL_PATH);
+		return;
+	}
+
+	rimeclaw::LlamaLocalConfig cfg;
+	cfg.model_path = GGUF_MODEL_PATH;
+	cfg.n_ctx = 4096;
+
+	try {
+		rimeclaw::LlamaLocalProvider provider(cfg);
+
+		// Define a get_weather tool
+		nlohmann::json weather_tool = {
+			{"type", "function"},
+			{"function", {
+				{"name", "get_weather"},
+				{"description", "Get the current weather for a given city."},
+				{"parameters", {
+					{"type", "object"},
+					{"properties", {
+						{"city", {
+							{"type", "string"},
+							{"description", "The city name, e.g. 'Beijing'"}
+						}}
+					}},
+					{"required", {"city"}}
+				}}
+			}}
+		};
+
+		rimeclaw::ChatCompletionRequest req;
+		req.messages.push_back(rimeclaw::Message("system",
+			"You are a helpful assistant. Use tools when appropriate."));
+		req.messages.push_back(rimeclaw::Message("user",
+			"What is the weather in Beijing today?"));
+		req.tools.push_back(weather_tool);
+		req.max_tokens = 256;
+		req.temperature = 0.0;
+
+		auto resp = provider.ChatCompletion(req);
+		printf("  Content: %s\n", resp.content.c_str());
+		printf("  Finish reason: %s\n", resp.finish_reason.c_str());
+		printf("  Tool calls: %zu\n", resp.tool_calls.size());
+
+		for (const auto& tc : resp.tool_calls) {
+			printf("    [%s] %s(%s)\n", tc.id.c_str(), tc.name.c_str(),
+				tc.arguments.dump().c_str());
+		}
+
+		// The model should attempt to call get_weather
+		EXPECT_TRUE(!resp.tool_calls.empty());
+		if (!resp.tool_calls.empty()) {
+			EXPECT_TRUE(resp.tool_calls[0].name == "get_weather");
+			EXPECT_TRUE(resp.tool_calls[0].arguments.contains("city"));
+			EXPECT_TRUE(resp.finish_reason == "tool_calls");
+		}
+	} catch (const std::exception& e) {
+		printf("  \033[31mFAIL\033[0m: exception: %s\n", e.what());
+		++g_failed;
+	}
+}
+
+// F4: Tool use multi-turn — verify tool result round-trip
+static void test_local_provider_tool_roundtrip() {
+	printf("[test_local_provider_tool_roundtrip]\n");
+
+	if (!fs::exists(GGUF_MODEL_PATH)) {
+		printf("  SKIP: model file not found: %s\n", GGUF_MODEL_PATH);
+		return;
+	}
+
+	rimeclaw::LlamaLocalConfig cfg;
+	cfg.model_path = GGUF_MODEL_PATH;
+	cfg.n_ctx = 4096;
+
+	try {
+		rimeclaw::LlamaLocalProvider provider(cfg);
+
+		nlohmann::json weather_tool = {
+			{"type", "function"},
+			{"function", {
+				{"name", "get_weather"},
+				{"description", "Get the current weather for a given city."},
+				{"parameters", {
+					{"type", "object"},
+					{"properties", {
+						{"city", {
+							{"type", "string"},
+							{"description", "The city name"}
+						}}
+					}},
+					{"required", {"city"}}
+				}}
+			}}
+		};
+
+		// Turn 1: user asks about weather
+		rimeclaw::ChatCompletionRequest req;
+		req.messages.push_back(rimeclaw::Message("system",
+			"You are a helpful assistant. Use tools when appropriate."));
+		req.messages.push_back(rimeclaw::Message("user",
+			"What is the weather in Shanghai?"));
+		req.tools.push_back(weather_tool);
+		req.max_tokens = 256;
+		req.temperature = 0.0;
+
+		auto resp1 = provider.ChatCompletion(req);
+		printf("  Turn 1 tool calls: %zu\n", resp1.tool_calls.size());
+
+		if (resp1.tool_calls.empty()) {
+			printf("  SKIP: model did not produce tool calls in turn 1\n");
+			return;
+		}
+
+		// Turn 2: feed tool result back, expect natural language response
+		// Add assistant message with the tool call content
+		req.messages.push_back(rimeclaw::Message("assistant", resp1.content));
+
+		// Add tool result as user message with tool_result content block
+		rimeclaw::Message tool_result_msg;
+		tool_result_msg.role = "user";
+		tool_result_msg.content.push_back(
+			rimeclaw::ContentBlock::MakeToolResult(
+				resp1.tool_calls[0].id,
+				"{\"temperature\": \"26C\", \"condition\": \"sunny\"}"));
+		req.messages.push_back(tool_result_msg);
+
+		auto resp2 = provider.ChatCompletion(req);
+		printf("  Turn 2 content: %s\n", resp2.content.c_str());
+		printf("  Turn 2 finish: %s\n", resp2.finish_reason.c_str());
+
+		// After receiving tool result, model should produce text (not another tool call)
+		EXPECT_TRUE(!resp2.content.empty());
+		// Response should reference the weather data
+		bool mentions_weather = resp2.content.find("26") != std::string::npos ||
+		                        resp2.content.find("sunny") != std::string::npos ||
+		                        resp2.content.find("Shanghai") != std::string::npos;
+		EXPECT_TRUE(mentions_weather);
+	} catch (const std::exception& e) {
+		printf("  \033[31mFAIL\033[0m: exception: %s\n", e.what());
+		++g_failed;
+	}
+}
+
+// F5: Streaming — verify streaming callback fires for each token
+static void test_local_provider_stream() {
+	printf("[test_local_provider_stream]\n");
+
+	if (!fs::exists(GGUF_MODEL_PATH)) {
+		printf("  SKIP: model file not found: %s\n", GGUF_MODEL_PATH);
+		return;
+	}
+
+	rimeclaw::LlamaLocalConfig cfg;
+	cfg.model_path = GGUF_MODEL_PATH;
+	cfg.n_ctx = 2048;
+
+	try {
+		rimeclaw::LlamaLocalProvider provider(cfg);
+
+		rimeclaw::ChatCompletionRequest req;
+		req.messages.push_back(rimeclaw::Message("user", "Count from 1 to 5."));
+		req.max_tokens = 64;
+		req.temperature = 0.0;
+		req.stream = true;
+
+		int delta_count = 0;
+		bool got_end = false;
+		std::string accumulated;
+
+		provider.ChatCompletionStream(req,
+			[&](const rimeclaw::ChatCompletionResponse& resp) {
+				if (resp.is_stream_end) {
+					got_end = true;
+				} else {
+					delta_count++;
+					accumulated += resp.content;
+				}
+			});
+
+		printf("  Deltas: %d, accumulated: %s\n", delta_count, accumulated.c_str());
+		EXPECT_TRUE(delta_count > 0);
+		EXPECT_TRUE(got_end);
+		EXPECT_TRUE(!accumulated.empty());
+	} catch (const std::exception& e) {
+		printf("  \033[31mFAIL\033[0m: exception: %s\n", e.what());
+		++g_failed;
+	}
+}
+
+#endif  // BUILD_LLAMA_LOCAL_PROVIDER
+
+// ════════════════════════════════════════════════════════════════════════════
 // Entry point
 // ════════════════════════════════════════════════════════════════════════════
 int main(void)
@@ -1229,6 +1498,16 @@ int main(void)
 	test_message_tool_send();
 	test_message_tool_agent_route();
 	test_extended_circuits_init();
+
+#ifdef BUILD_LLAMA_LOCAL_PROVIDER
+	// --- Group F: Local Provider (llama.cpp) ---
+	printf("\n--- Group F: Local Provider ---\n");
+	test_local_provider_load();
+	test_local_provider_completion();
+	test_local_provider_tool_use();
+	test_local_provider_tool_roundtrip();
+	test_local_provider_stream();
+#endif
 
 	printf("\n=== Result: %d passed, %d failed ===\n", g_passed, g_failed);
 	if (g_failed > 0) {
