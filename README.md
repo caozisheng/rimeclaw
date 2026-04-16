@@ -2,6 +2,8 @@
 
 An embedded claw library by c++, forked and simplified from [QuantClaw](https://github.com/QuantClaw/QuantClaw).
 
+RimeClaw supports Anthropic compatible providers, OpenAI compatible providers and local providers of .GGUF models via llama.cpp.
+
 If you're looking for a light-weight, low-dependency, cross-platform C++ agent library that's easy to integrate into any project, this is for you.
 
 # Introduction
