@@ -5,13 +5,11 @@
 
 #include <string>
 
-#include "rimeclaw/providers/curl_raii.hpp"
-
-#include "llm_provider.hpp"
+#include "rimeclaw/providers/http_provider_base.hpp"
 
 namespace rimeclaw {
 
-class AnthropicProvider : public LLMProvider {
+class AnthropicProvider : public HttpProviderBase {
  public:
   AnthropicProvider(const std::string& api_key, const std::string& base_url,
                     int timeout, const std::string& proxy = "");
@@ -24,14 +22,10 @@ class AnthropicProvider : public LLMProvider {
   std::string GetProviderName() const override;
   std::vector<std::string> GetSupportedModels() const override;
 
- private:
-  std::string MakeApiRequest(const std::string& json_payload) const;
-  CurlSlist CreateHeaders() const;
-
-  std::string api_key_;
-  std::string base_url_;
-  std::string proxy_;
-  int timeout_;
+ protected:
+  std::string GetApiEndpoint() const override { return "/v1/messages"; }
+  CurlSlist CreateHeaders() const override;
+  std::string GetProviderTag() const override { return "anthropic"; }
 };
 
 }  // namespace rimeclaw

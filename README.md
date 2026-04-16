@@ -173,6 +173,10 @@ Build system uses [vcpkg](https://github.com/microsoft/vcpkg) to manage dependen
 
 To build from source,
 
+```
+cd rimeclaw
+```
+   
 1. install vcpkg and set $ENV{VCPKG_ROOT}
    
    ```
@@ -190,42 +194,43 @@ To build from source,
 
 3. config providers
 
-```
-"providers": {
-    "minimax": {
-      "api": "openai-completions",
-      "api_key": "YOUR_API_KEY",
-      "base_url": "https://api.minimax.io/v1",
-      "timeout": 30
-    },
-    ...
-```
+   ```
+   "providers": {
+       "minimax": {
+         "api": "openai-completions",
+         "api_key": "YOUR_API_KEY",
+         "base_url": "https://api.minimax.io/v1",
+         "timeout": 30
+       },
+       ...
+    ```
 
 4. Put local models inside 3rd/models
 
-```
-"local": {
-      "api": "local",
-      "extra": {
-        "model_path": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
-        "n_ctx": 4096,
-        "n_gpu_layers": 0,
-        "n_threads": 0,
-        "n_batch": 512
-      }
-    }
-```
+    ```
+    "local": {
+          "api": "local",
+          "extra": {
+            "model_path": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
+            "n_ctx": 4096,
+            "n_gpu_layers": 0,
+            "n_threads": 0,
+            "n_batch": 512
+          }
+        }
+    ```
 
 - Qwen2.5-0.5B-Instruct-Q4_K_M: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
 
 - Qwen3.5-0.8B-Q4_K_M: https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf
+
 4. build
    
    ```
    cmake --build --preset build-all  
    ```
    
-   By-default path of rimeclaw_config.json and .rimeclaw
+   Post-build will copy rimeclaw_config.json, .rimeclaw and models/ to binary path.
    
    ```
    # Rimeclaw-output-binary-folder 
@@ -233,4 +238,9 @@ To build from source,
    ├── rimeclaw_config.json
    ├── .rimeclaw/
    └── models/
+   ```
+ 
+   ``` 
+   cd Rimeclaw-output-binary-folder 
+   ./test
    ```

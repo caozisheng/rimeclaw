@@ -9,44 +9,7 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 
-#include "rimeclaw/providers/provider_error.hpp"
-
 namespace rimeclaw {
-
-static size_t WriteCallback(void* contents, size_t size, size_t nmemb,
-                            std::string* userp) {
-  userp->append((char*)contents, size * nmemb);
-  return size * nmemb;
-}
-
-// Captures the Retry-After header value from HTTP response headers.
-struct RetryAfterCapture {
-  int retry_after_seconds = 0;
-};
-
-static size_t HeaderCallback(char* buffer, size_t size, size_t nitems,
-                             void* userdata) {
-  size_t total = size * nitems;
-  auto* capture = static_cast<RetryAfterCapture*>(userdata);
-  std::string header(buffer, total);
-
-  if (header.size() > 12) {
-    std::string lower = header.substr(0, 12);
-    for (auto& c : lower)
-      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (lower == "retry-after:") {
-      std::string value = header.substr(12);
-      auto start = value.find_first_not_of(" \t");
-      if (start != std::string::npos) {
-        value = value.substr(start);
-      }
-      try {
-        capture->retry_after_seconds = std::stoi(value);
-      } catch (...) {}
-    }
-  }
-  return total;
-}
 
 // Serialize messages to Anthropic format.
 // Returns {system_prompt, messages_json} -- system messages extracted to
@@ -58,14 +21,12 @@ serialize_messages_to_anthropic(const std::vector<Message>& messages) {
 
   for (const auto& msg : messages) {
     if (msg.role == "system") {
-      // Anthropic uses a top-level "system" field, not in messages array
       if (!system_prompt.empty())
         system_prompt += "\n";
       system_prompt += msg.text();
       continue;
     }
 
-    // Build content block array -- Anthropic uses native content blocks
     nlohmann::json content_arr = nlohmann::json::array();
 
     for (const auto& b : msg.content) {
@@ -85,11 +46,9 @@ serialize_messages_to_anthropic(const std::vector<Message>& messages) {
       }
     }
 
-    // Skip empty content arrays
     if (content_arr.empty())
       continue;
 
-    // Anthropic: tool_result blocks go in "user" role messages
     std::string role = msg.role;
     if (role == "tool")
       role = "user";
@@ -109,20 +68,16 @@ static int thinking_budget_tokens(const std::string& level) {
     return 4096;
   if (level == "high")
     return 16000;
-  return 0;  // "off" or unknown
+  return 0;
 }
 
 // Apply thinking parameters to an Anthropic API payload.
-// When thinking is enabled, temperature must be 1 and max_tokens must
-// accommodate budget.
 static void apply_thinking_params(nlohmann::json& payload,
                                   const ChatCompletionRequest& request) {
   int budget = thinking_budget_tokens(request.thinking);
   if (budget > 0) {
     payload["thinking"] = {{"type", "enabled"}, {"budget_tokens", budget}};
-    // Anthropic requires temperature=1 when thinking is enabled
     payload["temperature"] = 1;
-    // max_tokens must be > budget_tokens
     if (request.max_tokens <= budget) {
       payload["max_tokens"] = budget + 4096;
     }
@@ -130,8 +85,6 @@ static void apply_thinking_params(nlohmann::json& payload,
 }
 
 // Convert tools from OpenAI format to Anthropic format.
-// OpenAI: {type:"function", function:{name, description, parameters}}
-// Anthropic: {name, description, input_schema}
 static nlohmann::json
 convert_tools_to_anthropic(const std::vector<nlohmann::json>& tools) {
   nlohmann::json arr = nlohmann::json::array();
@@ -156,14 +109,9 @@ convert_tools_to_anthropic(const std::vector<nlohmann::json>& tools) {
 AnthropicProvider::AnthropicProvider(const std::string& api_key,
                                      const std::string& base_url, int timeout,
                                      const std::string& proxy)
-    : api_key_(api_key),
-      base_url_(base_url),
-      proxy_(proxy),
-      timeout_(timeout) {
-  if (base_url_.empty()) {
-    base_url_ = "https://api.anthropic.com";
-  }
-
+    : HttpProviderBase(api_key,
+                       base_url.empty() ? "https://api.anthropic.com" : base_url,
+                       timeout, proxy) {
   spdlog::info("AnthropicProvider initialized with base_url: {}", base_url_);
 }
 
@@ -197,7 +145,6 @@ AnthropicProvider::ChatCompletion(const ChatCompletionRequest& request) {
   std::string response = MakeApiRequest(json_payload);
   spdlog::debug("Received response from Anthropic API: {}", response);
 
-  // Parse response
   nlohmann::json response_json = nlohmann::json::parse(response);
 
   ChatCompletionResponse result;
@@ -219,7 +166,6 @@ AnthropicProvider::ChatCompletion(const ChatCompletionRequest& request) {
     }
   }
 
-  // Map Anthropic stop_reason to OpenAI finish_reason
   std::string stop_reason = response_json.value("stop_reason", "");
   if (stop_reason == "end_turn") {
     result.finish_reason = "stop";
@@ -238,66 +184,6 @@ std::string AnthropicProvider::GetProviderName() const {
   return "anthropic";
 }
 
-std::string
-AnthropicProvider::MakeApiRequest(const std::string& json_payload) const {
-  std::string read_buffer;
-  RetryAfterCapture retry_capture;
-
-  CurlHandle curl;
-  CurlSlist headers = CreateHeaders();
-
-  std::string url = base_url_ + "/v1/messages";
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload.c_str());
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &read_buffer);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &retry_capture);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_);
-  if (!proxy_.empty()) {
-    curl_easy_setopt(curl, CURLOPT_PROXY, proxy_.c_str());
-  }
-
-  CURLcode res = curl_easy_perform(curl);
-  if (res != CURLE_OK) {
-    ProviderErrorKind kind = ProviderErrorKind::kUnknown;
-    if (res == CURLE_OPERATION_TIMEDOUT) {
-      kind = ProviderErrorKind::kTimeout;
-    } else if (res == CURLE_COULDNT_CONNECT ||
-               res == CURLE_COULDNT_RESOLVE_HOST) {
-      kind = ProviderErrorKind::kTransient;
-    }
-    throw ProviderError(
-        kind, 0, "CURL request failed: " + std::string(curl_easy_strerror(res)),
-        "anthropic");
-  }
-
-  // Check HTTP status code
-  long http_code = 0;
-  curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &http_code);
-
-  if (http_code >= 400) {
-    auto error_kind =
-        ClassifyHttpError(static_cast<int>(http_code), read_buffer);
-    if (retry_capture.retry_after_seconds > 0) {
-      spdlog::warn("Anthropic API HTTP {}: rate limited, retry-after={}s",
-                   http_code, retry_capture.retry_after_seconds);
-    } else {
-      spdlog::error("Anthropic API HTTP {}: {}", http_code,
-                    read_buffer.substr(0, 256));
-    }
-    ProviderError err(error_kind, static_cast<int>(http_code),
-                      "Anthropic API error (HTTP " + std::to_string(http_code) +
-                          "): " + read_buffer,
-                      "anthropic");
-    err.SetRetryAfterSeconds(retry_capture.retry_after_seconds);
-    throw err;
-  }
-
-  return read_buffer;
-}
-
 CurlSlist AnthropicProvider::CreateHeaders() const {
   CurlSlist headers;
   headers.append("Content-Type: application/json");
@@ -313,10 +199,9 @@ CurlSlist AnthropicProvider::CreateHeaders() const {
 
 struct AnthropicStreamContext {
   std::function<void(const ChatCompletionResponse&)> callback;
-  std::string buffer;      // incomplete line across chunks
-  std::string event_type;  // current SSE event type
+  std::string buffer;
+  std::string event_type;
 
-  // Accumulated tool calls
   struct PendingToolCall {
     std::string id;
     std::string name;
@@ -334,13 +219,11 @@ static size_t AnthropicStreamWriteCallback(void* contents, size_t size,
   std::string chunk(static_cast<char*>(contents), total);
   ctx->buffer += chunk;
 
-  // Process complete lines
   size_t pos;
   while ((pos = ctx->buffer.find('\n')) != std::string::npos) {
     std::string line = ctx->buffer.substr(0, pos);
     ctx->buffer.erase(0, pos + 1);
 
-    // Strip trailing \r
     if (!line.empty() && line.back() == '\r') {
       line.pop_back();
     }
@@ -348,17 +231,14 @@ static size_t AnthropicStreamWriteCallback(void* contents, size_t size,
     if (line.empty())
       continue;
 
-    // Parse SSE event type
     if (line.substr(0, 6) == "event:") {
       ctx->event_type = line.substr(6);
-      // Trim leading space
       if (!ctx->event_type.empty() && ctx->event_type[0] == ' ') {
         ctx->event_type = ctx->event_type.substr(1);
       }
       continue;
     }
 
-    // Parse SSE data
     if (line.substr(0, 5) != "data:")
       continue;
     std::string data = line.substr(5);
@@ -370,7 +250,6 @@ static size_t AnthropicStreamWriteCallback(void* contents, size_t size,
     if (j.is_discarded())
       continue;
 
-    // Handle events based on type
     if (ctx->event_type == "content_block_start") {
       ctx->current_block_index++;
       if (j.contains("content_block")) {
@@ -389,23 +268,17 @@ static size_t AnthropicStreamWriteCallback(void* contents, size_t size,
         std::string delta_type = delta.value("type", "");
 
         if (delta_type == "text_delta") {
-          // Emit text chunk immediately
           ChatCompletionResponse resp;
           resp.content = delta.value("text", "");
           ctx->callback(resp);
         } else if (delta_type == "input_json_delta") {
-          // Accumulate tool_use JSON fragments
           if (!ctx->pending_tool_calls.empty()) {
             ctx->pending_tool_calls.back().arguments +=
                 delta.value("partial_json", "");
           }
         }
       }
-    } else if (ctx->event_type == "message_delta") {
-      // Contains stop_reason
-      // Will be followed by message_stop
     } else if (ctx->event_type == "message_stop") {
-      // Emit accumulated tool calls if any
       if (!ctx->pending_tool_calls.empty()) {
         ChatCompletionResponse tc_resp;
         tc_resp.finish_reason = "tool_calls";
@@ -466,83 +339,18 @@ void AnthropicProvider::ChatCompletionStream(
   stream_ctx.callback = callback;
 
   RetryAfterCapture retry_capture;
-
   CurlHandle curl;
   CurlSlist headers = CreateHeaders();
 
-  std::string url = base_url_ + "/v1/messages";
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload.c_str());
+  // Set stream-specific write callback
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, AnthropicStreamWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream_ctx);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &retry_capture);
 
-  // Disable Nagle algorithm to reduce latency
-  curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
-  
-  // Set overall connection timeout for the initial connection phase
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout_);
-  
-  // Set a large overall timeout for the streaming session (e.g. 10 minutes)
-  // because generating a long response might take several minutes,
-  // and we don't want the default API timeout (e.g. 30s) to abort it.
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-
-  // For long-running streams (like DeepSeek or long contexts), Windows proxy or 
-  // firewall might drop the connection after 21s of absolute silence (e.g. waiting for the first chunk).
-  // The standard TCP keep-alive sometimes isn't aggressive enough or is ignored by some proxies.
-  // Using libcurl's built-in low speed limit as a dynamic keepalive mechanism:
-  // We disable the low speed limit for streams, OR set it to a very long time,
-  // to explicitly tell libcurl NOT to abort the connection early.
-  // Setting it to 0 disables the low speed limit abort entirely.
-  curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 0L);
-  curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 0L);
-
-  // Enable TCP Keep-Alive to prevent intermediate NATs/firewalls from dropping idle connections
-  curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-  curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 15L);  // More aggressive: 15s instead of 30s
-  curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 5L);
-
-  if (!proxy_.empty()) {
-    curl_easy_setopt(curl, CURLOPT_PROXY, proxy_.c_str());
-  }
+  // Configure shared streaming options
+  ConfigureStreamingCurl(curl, headers, json_payload, retry_capture);
 
   CURLcode res = curl_easy_perform(curl);
-  if (res != CURLE_OK) {
-    ProviderErrorKind kind = ProviderErrorKind::kUnknown;
-    if (res == CURLE_OPERATION_TIMEDOUT) {
-      kind = ProviderErrorKind::kTimeout;
-    } else if (res == CURLE_COULDNT_CONNECT ||
-               res == CURLE_COULDNT_RESOLVE_HOST) {
-      kind = ProviderErrorKind::kTransient;
-    }
-    throw ProviderError(kind, 0,
-                        "CURL streaming request failed: " +
-                            std::string(curl_easy_strerror(res)),
-                        "anthropic");
-  }
-
-  // Check HTTP status code for streaming requests too
-  long http_code = 0;
-  curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &http_code);
-
-  if (http_code >= 400) {
-    auto error_kind = ClassifyHttpError(static_cast<int>(http_code), "");
-    if (retry_capture.retry_after_seconds > 0) {
-      spdlog::warn("Anthropic streaming HTTP {}: rate limited, retry-after={}s",
-                   http_code, retry_capture.retry_after_seconds);
-    } else {
-      spdlog::error("Anthropic streaming HTTP {}", http_code);
-    }
-    ProviderError err(error_kind, static_cast<int>(http_code),
-                      "Anthropic streaming API error (HTTP " +
-                          std::to_string(http_code) + ")",
-                      "anthropic");
-    err.SetRetryAfterSeconds(retry_capture.retry_after_seconds);
-    throw err;
-  }
+  CheckStreamingErrors(curl, res, retry_capture);
 }
 
 std::vector<std::string> AnthropicProvider::GetSupportedModels() const {

@@ -297,8 +297,16 @@ LlamaLocalProvider::Generate(
 
   // Trim divergent tail from KV cache
   if (prefix_len < kv_tokens_.size()) {
-    llama_memory_seq_rm(llama_get_memory(ctx_), 0, static_cast<llama_pos>(prefix_len), -1);
-    kv_tokens_.resize(prefix_len);
+    bool removed = llama_memory_seq_rm(
+        llama_get_memory(ctx_), 0, static_cast<llama_pos>(prefix_len), -1);
+    if (!removed) {
+      // Partial removal not supported (e.g. M-RoPE models) — full reset
+      spdlog::info("Partial KV removal unsupported, clearing full cache");
+      ClearKVCache();
+      prefix_len = 0;
+    } else {
+      kv_tokens_.resize(prefix_len);
+    }
   }
 
   const int n_past = static_cast<int>(prefix_len);
