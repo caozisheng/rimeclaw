@@ -159,7 +159,7 @@ cd rimeclaw
 4. build
    
    ```
-   cmake --build --preset build-all  
+   cmake --build --preset build-all --config Release 
    ```
    
    Post-build will copy rimeclaw_config.json, .rimeclaw and models/ to binary path.
