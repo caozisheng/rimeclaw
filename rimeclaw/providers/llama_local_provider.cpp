@@ -295,18 +295,18 @@ LlamaLocalProvider::Generate(
     ++prefix_len;
   }
 
-  // Trim divergent tail from KV cache
+  // Trim divergent tail from KV cache.
+  // llama_memory_seq_rm does not work with M-RoPE models — partial removal
+  // silently fails, leaving stale high-position entries that cause
+  // "X < Y" decode errors.  When the prefix diverges we must clear the
+  // entire cache and re-process from scratch.  KV reuse still kicks in
+  // when the full cached sequence is a prefix of the new prompt (the
+  // common append-only case).
   if (prefix_len < kv_tokens_.size()) {
-    bool removed = llama_memory_seq_rm(
-        llama_get_memory(ctx_), 0, static_cast<llama_pos>(prefix_len), -1);
-    if (!removed) {
-      // Partial removal not supported (e.g. M-RoPE models) — full reset
-      spdlog::info("Partial KV removal unsupported, clearing full cache");
-      ClearKVCache();
-      prefix_len = 0;
-    } else {
-      kv_tokens_.resize(prefix_len);
-    }
+    spdlog::info("KV prefix diverged at {} (cached {}), clearing full cache",
+                 prefix_len, kv_tokens_.size());
+    ClearKVCache();
+    prefix_len = 0;
   }
 
   const int n_past = static_cast<int>(prefix_len);
@@ -517,8 +517,97 @@ LlamaLocalProvider::ParseToolCalls(const std::string& output) const {
         calls.push_back(std::move(tc));
       }
     } catch (const nlohmann::json::exception& e) {
-      spdlog::warn("LlamaLocalProvider: failed to parse tool call JSON: {}",
-                    e.what());
+      // Fallback: small models sometimes produce JSON with unescaped
+      // quotes inside string values (e.g. bash commands with nested
+      // quotes).  Try to extract "name" via simple string search and
+      // treat the rest as a single string argument.
+      spdlog::warn("LlamaLocalProvider: strict JSON parse failed, "
+                   "attempting fallback extraction: {}", e.what());
+
+      // Extract "name":"<value>"
+      auto extract_field = [&](const std::string& field) -> std::string {
+        std::string pattern = "\"" + field + "\"";
+        auto pos = json_str.find(pattern);
+        if (pos == std::string::npos) return "";
+        pos = json_str.find('"', pos + pattern.size());
+        if (pos == std::string::npos) return "";
+        // Skip colon and whitespace between key and value
+        auto colon = json_str.find(':', pos - pattern.size() + pattern.size());
+        if (colon == std::string::npos) return "";
+        auto vstart = json_str.find('"', colon + 1);
+        if (vstart == std::string::npos) return "";
+        vstart++;
+        // Find closing quote (not preceded by backslash)
+        auto vend = vstart;
+        while (vend < json_str.size()) {
+          if (json_str[vend] == '"' &&
+              (vend == 0 || json_str[vend - 1] != '\\')) {
+            break;
+          }
+          vend++;
+        }
+        return json_str.substr(vstart, vend - vstart);
+      };
+
+      // Simpler approach: find "name":"..." then grab everything after
+      // the first comma as a flat argument blob.
+      std::string name_pattern = "\"name\"";
+      auto npos = json_str.find(name_pattern);
+      if (npos != std::string::npos) {
+        // Find the value after "name":
+        auto colon = json_str.find(':', npos + name_pattern.size());
+        if (colon != std::string::npos) {
+          auto q1 = json_str.find('"', colon + 1);
+          if (q1 != std::string::npos) {
+            auto q2 = json_str.find('"', q1 + 1);
+            if (q2 != std::string::npos) {
+              std::string name = json_str.substr(q1 + 1, q2 - q1 - 1);
+
+              // Find the next key after name — grab its key and value
+              // as a single string argument
+              ToolCall tc;
+              tc.id = "local_call_" + std::to_string(call_idx++);
+              tc.name = name;
+
+              // Try to find "command":"..." or other key
+              auto comma = json_str.find(',', q2);
+              if (comma != std::string::npos) {
+                // Find key
+                auto kq1 = json_str.find('"', comma + 1);
+                if (kq1 != std::string::npos) {
+                  auto kq2 = json_str.find('"', kq1 + 1);
+                  if (kq2 != std::string::npos) {
+                    std::string key = json_str.substr(kq1 + 1, kq2 - kq1 - 1);
+                    // Get everything between the next colon+" and the
+                    // last " before }
+                    auto vcolon = json_str.find(':', kq2);
+                    if (vcolon != std::string::npos) {
+                      auto vq1 = json_str.find('"', vcolon + 1);
+                      auto closing_brace = json_str.rfind('}');
+                      auto vq2 = (closing_brace != std::string::npos)
+                                     ? json_str.rfind('"', closing_brace)
+                                     : json_str.rfind('"');
+                      if (vq1 != std::string::npos && vq2 != std::string::npos &&
+                          vq2 > vq1) {
+                        std::string val =
+                            json_str.substr(vq1 + 1, vq2 - vq1 - 1);
+                        tc.arguments = {{key, val}};
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (!tc.name.empty()) {
+                spdlog::info("LlamaLocalProvider: fallback extracted tool "
+                             "call: name='{}', args={}", tc.name,
+                             tc.arguments.dump());
+                calls.push_back(std::move(tc));
+              }
+            }
+          }
+        }
+      }
     }
 
     search_pos = unclosed ? output.size() : (close_pos + kCloseLen);

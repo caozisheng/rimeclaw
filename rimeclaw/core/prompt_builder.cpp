@@ -102,11 +102,15 @@ std::string PromptBuilder::get_soul_section() const {
 }
 
 std::string PromptBuilder::get_runtime_info() const {
+  // Only include the timezone, not a ticking clock.  Volatile timestamps
+  // embedded in the system prompt invalidate KV cache / prompt cache on
+  // every turn.  Agents that need the current time should call a tool
+  // (e.g. exec "date") instead.
   auto now = std::chrono::system_clock::now();
   std::time_t t = std::chrono::system_clock::to_time_t(now);
   std::ostringstream ss;
-  ss << "Current time: "
-     << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+  ss << "Timezone: "
+     << std::put_time(std::localtime(&t), "%Z");
   return ss.str();
 }
 

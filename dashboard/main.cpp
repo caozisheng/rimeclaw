@@ -1,10 +1,6 @@
 #include "DashboardMainWindow.h"
 #include <spdlog/spdlog.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 int main()
 {
     try {
@@ -18,9 +14,3 @@ int main()
 
     return 0;
 }
-
-#ifdef _WIN32
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
-    return main();
-}
-#endif

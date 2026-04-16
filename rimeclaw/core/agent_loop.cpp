@@ -226,6 +226,8 @@ std::vector<Message> AgentLoop::ProcessMessage(
 
   int iterations = 0;
   int overflow_retries = 0;
+  std::string last_tool_call_sig;
+  int repeat_tool_count = 0;
 
   while (iterations < max_iterations_ && !stop_requested_) {
     try {
@@ -290,6 +292,29 @@ std::vector<Message> AgentLoop::ProcessMessage(
               valid_tool_calls[i].id, tool_results[i]));
         request.messages.push_back(results_msg);
         new_messages.push_back(results_msg);
+
+        // --- Repeat tool call detection ---
+        std::string sig;
+        for (const auto& tc : valid_tool_calls) {
+          sig += tc.name + ":" + tc.arguments.dump() + ";";
+        }
+        if (sig == last_tool_call_sig) {
+          repeat_tool_count++;
+          if (repeat_tool_count >= kMaxRepeatToolCalls) {
+            spdlog::warn("Detected {} consecutive identical tool calls, "
+                         "breaking loop", repeat_tool_count);
+            Message stop_msg;
+            stop_msg.role = "assistant";
+            stop_msg.content.push_back(ContentBlock::MakeText(
+                "I seem to be stuck repeating the same action. Let me stop "
+                "and reconsider."));
+            new_messages.push_back(stop_msg);
+            return new_messages;
+          }
+        } else {
+          last_tool_call_sig = sig;
+          repeat_tool_count = 1;
+        }
 
         iterations++;
         continue;
@@ -454,6 +479,8 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
 
   int iterations = 0;
   int overflow_retries_stream = 0;
+  std::string last_tool_call_sig_stream;
+  int repeat_tool_count_stream = 0;
 
   while (iterations < max_iterations_ && !stop_requested_) {
     try {
@@ -463,6 +490,7 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
       bool handled_tool_calls = false;
       bool saw_invalid_tool_call = false;
       bool saw_stream_end = false;
+      std::string stream_tool_sig;
 
       provider->ChatCompletionStream(
           request, [&](const ChatCompletionResponse& chunk) {
@@ -559,6 +587,11 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
               }
               request.messages.push_back(results_msg);
               new_messages.push_back(results_msg);
+
+              // Build signature for repeat detection
+              for (const auto& tc : valid_tool_calls) {
+                stream_tool_sig += tc.name + ":" + tc.arguments.dump() + ";";
+              }
               return;
             }
           });
@@ -579,6 +612,31 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
       }
 
       if (handled_tool_calls) {
+        // --- Repeat tool call detection (streaming) ---
+        if (stream_tool_sig == last_tool_call_sig_stream) {
+          repeat_tool_count_stream++;
+          if (repeat_tool_count_stream >= kMaxRepeatToolCalls) {
+            spdlog::warn("Detected {} consecutive identical tool calls "
+                         "(streaming), breaking loop", repeat_tool_count_stream);
+            if (callback) {
+              callback({"message_end",
+                        {{"content",
+                          "I seem to be stuck repeating the same action. "
+                          "Let me stop and reconsider."}}});
+            }
+            Message stop_msg;
+            stop_msg.role = "assistant";
+            stop_msg.content.push_back(ContentBlock::MakeText(
+                "I seem to be stuck repeating the same action. Let me stop "
+                "and reconsider."));
+            new_messages.push_back(stop_msg);
+            return new_messages;
+          }
+        } else {
+          last_tool_call_sig_stream = stream_tool_sig;
+          repeat_tool_count_stream = 1;
+        }
+
         iterations++;
         continue;
       }

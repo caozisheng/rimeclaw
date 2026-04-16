@@ -41,20 +41,9 @@ target_link_libraries(dashboard PRIVATE
     Threads::Threads
 )
 
-if(WIN32)
-    set_target_properties(dashboard PROPERTIES
-        OUTPUT_NAME "dashboard"
-        WIN32_EXECUTABLE TRUE
-    )
-elseif(APPLE)
-    set_target_properties(dashboard PROPERTIES
-        OUTPUT_NAME "dashboard"
-    )
-else()
-    set_target_properties(dashboard PROPERTIES
-        OUTPUT_NAME "dashboard"
-    )
-endif()
+set_target_properties(dashboard PROPERTIES
+    OUTPUT_NAME "dashboard"
+)
 
 foreach(CONFIG_TYPE Debug Release RelWithDebInfo MinSizeRel)
     string(TOUPPER ${CONFIG_TYPE} CONFIG_TYPE_UPPER)

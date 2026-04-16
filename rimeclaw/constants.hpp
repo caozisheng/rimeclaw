@@ -79,6 +79,10 @@ inline constexpr int kOverflowCompactionMaxRetries = 3;
 /// Maximum transient error retries before giving up
 inline constexpr int kMaxTransientRetries = 3;
 
+/// Consecutive identical tool call limit — break the loop when the model
+/// repeats the exact same tool name + arguments this many times in a row.
+inline constexpr int kMaxRepeatToolCalls = 3;
+
 // ------------------------------------------------------------
 // Session compaction defaults
 // ------------------------------------------------------------
