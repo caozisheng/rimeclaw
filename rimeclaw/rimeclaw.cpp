@@ -451,7 +451,8 @@ int claw_send_msg(RimeClawHandle handle, const char* session_key,
                                          ? ""
                                          : (ev.data.is_string()
                                                 ? ev.data.get<std::string>()
-                                                : ev.data.dump());
+                                                : ev.data.dump(-1, ' ', false,
+                                                    nlohmann::json::error_handler_t::replace));
         callback(ev.type.c_str(),
                  ev.data.is_null() ? nullptr : data_str.c_str(), userdata);
       } catch (const std::exception& e) {

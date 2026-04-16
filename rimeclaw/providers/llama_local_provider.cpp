@@ -48,8 +48,13 @@ LlamaLocalProvider::LlamaLocalProvider(const LlamaLocalConfig& config)
         } else if (level == GGML_LOG_LEVEL_WARN) {
           spdlog::warn("[llama] {}", text);
         }
+        // Flush all llama logs so GGML_ASSERT messages appear before abort()
+        spdlog::default_logger()->flush();
       },
       nullptr);
+  // Ensure all info+ logs are flushed immediately — crash diagnostics.
+  spdlog::flush_on(spdlog::level::info);
+
   llama_backend_init();
   LoadModel();
 }
@@ -378,6 +383,8 @@ LlamaLocalProvider::Generate(
     // Check for end of sequence
     if (llama_vocab_is_eog(vocab_, new_token) ||
         new_token == eos || new_token == eot) {
+      spdlog::info("LlamaLocalProvider: EOS at iteration {}, token_id={}",
+                   i, new_token);
       result.finish_reason = "stop";
       break;
     }
@@ -396,9 +403,17 @@ LlamaLocalProvider::Generate(
     }
 
     // Prepare next decode
+    const llama_pos next_pos =
+        static_cast<llama_pos>(kv_tokens_.size() - 1);
+    if (next_pos >= config_.n_ctx) {
+      spdlog::warn("LlamaLocalProvider: pos {} >= n_ctx {}, stopping",
+                    next_pos, config_.n_ctx);
+      result.finish_reason = "length";
+      break;
+    }
     batch.n_tokens = 1;
     batch.token[0] = new_token;
-    batch.pos[0] = static_cast<llama_pos>(kv_tokens_.size() - 1);
+    batch.pos[0] = next_pos;
     batch.n_seq_id[0] = 1;
     batch.seq_id[0][0] = 0;
     batch.logits[0] = 1;
@@ -413,11 +428,16 @@ LlamaLocalProvider::Generate(
     result.finish_reason = "length";
   }
 
+  spdlog::info("LlamaLocalProvider: Generate loop exited, "
+               "completion_tokens={}, finish_reason={}, kv_size={}",
+               result.completion_tokens, result.finish_reason,
+               kv_tokens_.size());
+
   result.text = std::move(generated_text);
 
-  spdlog::debug("LlamaLocalProvider: Generate done, {} completion tokens, "
-                "finish_reason={}",
-                result.completion_tokens, result.finish_reason);
+  spdlog::info("LlamaLocalProvider: Generate done, {} completion tokens, "
+               "finish_reason={}",
+               result.completion_tokens, result.finish_reason);
 
   return result;
 }
@@ -447,7 +467,9 @@ LlamaLocalProvider::ParseToolCalls(const std::string& output) const {
 
     size_t body_start = open_pos + kOpenLen;
     size_t close_pos = output.find(kClose, body_start);
-    if (close_pos == std::string::npos) break;  // no closing tag — stop
+    // If no closing tag, treat end-of-string as implicit close (model hit EOS)
+    const bool unclosed = (close_pos == std::string::npos);
+    if (unclosed) close_pos = output.size();
 
     // Trim leading/trailing whitespace from body
     size_t body_end = close_pos;
@@ -467,7 +489,22 @@ LlamaLocalProvider::ParseToolCalls(const std::string& output) const {
       ToolCall tc;
       tc.id = "local_call_" + std::to_string(call_idx++);
       tc.name = j.value("name", "");
-      tc.arguments = j.value("arguments", nlohmann::json::object());
+
+      // Model may produce {"name":"fn","arguments":{...}} (standard) or
+      // flat {"name":"fn","path":"...","content":"..."} (Qwen3.5 quirk).
+      if (j.contains("arguments") && j["arguments"].is_object()) {
+        tc.arguments = j["arguments"];
+      } else {
+        // Collect all keys except "name" as arguments
+        nlohmann::json args = nlohmann::json::object();
+        for (auto it = j.begin(); it != j.end(); ++it) {
+          if (it.key() != "name") {
+            args[it.key()] = it.value();
+          }
+        }
+        tc.arguments = args;
+      }
+
       if (!tc.name.empty()) {
         calls.push_back(std::move(tc));
       }
@@ -476,7 +513,7 @@ LlamaLocalProvider::ParseToolCalls(const std::string& output) const {
                     e.what());
     }
 
-    search_pos = close_pos + kCloseLen;
+    search_pos = unclosed ? output.size() : (close_pos + kCloseLen);
   }
   return calls;
 }
@@ -485,39 +522,46 @@ LlamaLocalProvider::ParseToolCalls(const std::string& output) const {
 // Strip tool call XML from text content
 // ---------------------------------------------------------------------------
 
-static std::string StripToolCallBlocks(const std::string& text) {
-  // Manual removal of <tool_call>...</tool_call> blocks (avoids std::regex).
-  static constexpr const char* kOpen  = "<tool_call>";
-  static constexpr const char* kClose = "</tool_call>";
-  static constexpr size_t kOpenLen  = 11;
-  static constexpr size_t kCloseLen = 12;
-
+// Strip blocks delimited by open/close XML tags.  If the closing tag is
+// missing (model hit EOS), everything from the open tag to end-of-string is
+// removed.
+static std::string StripXmlBlocks(const std::string& text,
+                                  const char* open_tag, size_t open_len,
+                                  const char* close_tag, size_t close_len) {
   std::string result;
   result.reserve(text.size());
   size_t pos = 0;
 
   while (pos < text.size()) {
-    size_t open_pos = text.find(kOpen, pos);
+    size_t open_pos = text.find(open_tag, pos);
     if (open_pos == std::string::npos) {
       result.append(text, pos);
       break;
     }
     result.append(text, pos, open_pos - pos);
-    size_t close_pos = text.find(kClose, open_pos + kOpenLen);
+    size_t close_pos = text.find(close_tag, open_pos + open_len);
     if (close_pos == std::string::npos) {
-      // No closing tag — keep the rest as-is
-      result.append(text, open_pos);
+      // No closing tag — strip everything from open tag to end
       break;
     }
-    pos = close_pos + kCloseLen;
+    pos = close_pos + close_len;
   }
 
   // Trim trailing whitespace
   auto end = result.find_last_not_of(" \t\n\r");
   if (end != std::string::npos) {
     result.erase(end + 1);
+  } else {
+    result.clear();
   }
   return result;
+}
+
+static std::string StripToolCallBlocks(const std::string& text) {
+  // Strip <think>...</think> blocks first (Qwen3.5 thinking model)
+  std::string stripped = StripXmlBlocks(text, "<think>", 7, "</think>", 8);
+  // Strip <tool_call>...</tool_call> blocks
+  return StripXmlBlocks(stripped, "<tool_call>", 11, "</tool_call>", 12);
 }
 
 // ---------------------------------------------------------------------------
@@ -544,7 +588,7 @@ LlamaLocalProvider::ChatCompletion(const ChatCompletionRequest& req) {
     resp.content = StripToolCallBlocks(gen.text);
   } else {
     resp.finish_reason = gen.finish_reason;
-    resp.content = gen.text;
+    resp.content = StripXmlBlocks(gen.text, "<think>", 7, "</think>", 8);
   }
 
   return resp;
@@ -564,25 +608,74 @@ void LlamaLocalProvider::ChatCompletionStream(
   // Accumulate full text for final tool call parsing
   std::string full_text;
 
+  // Buffer for incomplete UTF-8 sequences spanning multiple tokens.
+  // llama.cpp's tokenizer may split a multi-byte codepoint across tokens
+  // (e.g. an emoji like F0 9F 98 8A may arrive as two pieces: "20 F0 9F"
+  // then "98 8A").  Emitting a truncated sequence crashes json::dump().
+  std::string utf8_buf;
+
   auto token_cb = [&](const std::string& piece) -> bool {
     full_text += piece;
+    utf8_buf += piece;
 
-    ChatCompletionResponse delta;
-    delta.content = piece;
-    cb(delta);
+    // Determine how many bytes at the tail form an incomplete UTF-8 sequence.
+    // Walk backwards from the end to find the start of the last codepoint.
+    size_t incomplete = 0;
+    for (size_t i = utf8_buf.size(); i > 0 && (utf8_buf.size() - i) < 4; ) {
+      --i;
+      auto c = static_cast<unsigned char>(utf8_buf[i]);
+      if ((c & 0xC0) != 0x80) {
+        // This is a leading byte.  How many bytes does it expect?
+        int expected = 1;
+        if      ((c & 0x80) == 0)    expected = 1;
+        else if ((c & 0xE0) == 0xC0) expected = 2;
+        else if ((c & 0xF0) == 0xE0) expected = 3;
+        else if ((c & 0xF8) == 0xF0) expected = 4;
+
+        size_t available = utf8_buf.size() - i;
+        if (available < static_cast<size_t>(expected)) {
+          incomplete = available;  // hold these bytes back
+        }
+        break;
+      }
+    }
+
+    if (utf8_buf.size() > incomplete) {
+      std::string emit = utf8_buf.substr(0, utf8_buf.size() - incomplete);
+      utf8_buf = utf8_buf.substr(utf8_buf.size() - incomplete);
+
+      ChatCompletionResponse delta;
+      delta.content = std::move(emit);
+      cb(delta);
+    }
     return true;
   };
 
   GenerateResult gen = Generate(prompt, req.max_tokens, temp, token_cb);
 
-  spdlog::debug("LlamaLocalProvider: stream Generate returned, "
-                "full_text size={}", full_text.size());
+  // Flush any remaining buffered bytes (possibly incomplete UTF-8 —
+  // replace with U+FFFD so it doesn't crash json::dump).
+  if (!utf8_buf.empty()) {
+    ChatCompletionResponse delta;
+    delta.content = std::move(utf8_buf);
+    cb(delta);
+  }
+
+  spdlog::info("LlamaLocalProvider: stream Generate returned, "
+               "full_text size={}", full_text.size());
 
   // Parse tool calls and emit them in a separate non-end chunk so that the
   // agent loop (which ignores tool_calls on is_stream_end chunks) can see them.
-  auto tool_calls = ParseToolCalls(full_text);
-  spdlog::debug("LlamaLocalProvider: ParseToolCalls found {} call(s)",
-                tool_calls.size());
+  std::vector<ToolCall> tool_calls;
+  try {
+    tool_calls = ParseToolCalls(full_text);
+  } catch (const std::exception& e) {
+    spdlog::error("LlamaLocalProvider: ParseToolCalls exception: {}", e.what());
+  } catch (...) {
+    spdlog::error("LlamaLocalProvider: ParseToolCalls unknown exception");
+  }
+  spdlog::info("LlamaLocalProvider: ParseToolCalls found {} call(s)",
+               tool_calls.size());
 
   if (!tool_calls.empty()) {
     ChatCompletionResponse tool_chunk;
@@ -600,7 +693,7 @@ void LlamaLocalProvider::ChatCompletionStream(
       final_resp.tool_calls.empty() ? gen.finish_reason : "tool_calls";
 
   cb(final_resp);
-  spdlog::debug("LlamaLocalProvider: ChatCompletionStream done");
+  spdlog::info("LlamaLocalProvider: ChatCompletionStream done");
 }
 
 }  // namespace rimeclaw

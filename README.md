@@ -118,6 +118,8 @@ change providers (current Minimax) and "agent.model" of "config/rimeclaw_config.
 download GGUF model and put it into `3rd/models/`
 - Qwen2.5-0.5B-Instruct-Q4_K_M
   https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+- Qwen3.5-0.8B-Q4_K_M
+  https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf
   
 5. build
 

@@ -4,11 +4,13 @@ cmake_minimum_required(VERSION 3.25)
 # vcpkg Integration (MUST be before project())
 # ============================================================================
 # Recommended: use CMakePresets.json (cmake --preset build-lib / build-test / build-dashboard / build-all)
-# Each preset sets VCPKG_MANIFEST_DIR, VCPKG_INSTALLED_DIR, and CMAKE_TOOLCHAIN_FILE.
+# Each preset sets VCPKG_MANIFEST_DIR (3rd/), VCPKG_INSTALLED_DIR, CMAKE_TOOLCHAIN_FILE,
+# and BUILD_TEST / BUILD_DASHBOARD switches.
 #
 # Manual usage (without presets):
 #   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=<VCPKG_ROOT>/scripts/buildsystems/vcpkg.cmake
-#                       -DVCPKG_MANIFEST_DIR=<path-to-dir-containing-vcpkg.json>
+#                       -DVCPKG_MANIFEST_DIR=<sourceDir>/3rd
+#                       -DBUILD_TEST=ON -DBUILD_DASHBOARD=ON
 # ============================================================================
 
 # Auto-detect vcpkg toolchain from VCPKG_ROOT if not explicitly provided
@@ -40,8 +42,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Build Options
 # ============================================================================
 
-option(RIMECLAW_BUILD_TEST "Build test executable" ON)
-option(RIMECLAW_BUILD_DASHBOARD "Build dashboard executable" ON)
+option(BUILD_TEST "Build test executable" ON)
+option(BUILD_DASHBOARD "Build dashboard executable" ON)
 option(BUILD_LLAMA_LOCAL_PROVIDER "Enable local LLM inference via llama.cpp" ON)
 
 # ============================================================================
@@ -55,7 +57,7 @@ endif()
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
     add_definitions(-D_WINDOWS)
-    if(RIMECLAW_BUILD_DASHBOARD)
+    if(BUILD_DASHBOARD)
         add_definitions(-DBUILD_WITH_GUI)
     endif()
     add_compile_options(/W3)
@@ -69,7 +71,7 @@ if(MSVC)
     set(CMAKE_SUPPRESS_REGENERATION true)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
-    if(RIMECLAW_BUILD_DASHBOARD)
+    if(BUILD_DASHBOARD)
         add_definitions(-DBUILD_WITH_GUI)
     endif()
 endif()
@@ -100,13 +102,13 @@ message(STATUS "")
 message(STATUS "=== Adding RimeClaw Library ===")
 add_subdirectory(rimeclaw)
 
-if(RIMECLAW_BUILD_DASHBOARD)
+if(BUILD_DASHBOARD)
     message(STATUS "")
     message(STATUS "=== Adding RimeClaw Dashboard ===")
     add_subdirectory(dashboard)
 endif()
 
-if(RIMECLAW_BUILD_TEST)
+if(BUILD_TEST)
     message(STATUS "")
     message(STATUS "=== Adding RimeClaw Test ===")
     add_subdirectory(test)

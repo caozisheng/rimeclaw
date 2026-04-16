@@ -14,7 +14,8 @@
           "type": "FILEPATH",
           "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
         },
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd"
       }
     },
     {
@@ -24,10 +25,9 @@
       "inherits": "base",
       "binaryDir": "${sourceDir}/build-lib",
       "cacheVariables": {
-        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-lib",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/build-lib/installed",
-        "RIMECLAW_BUILD_TEST": "OFF",
-        "RIMECLAW_BUILD_DASHBOARD": "OFF"
+        "BUILD_TEST": "OFF",
+        "BUILD_DASHBOARD": "OFF"
       }
     },
     {
@@ -37,10 +37,9 @@
       "inherits": "base",
       "binaryDir": "${sourceDir}/build-test",
       "cacheVariables": {
-        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-test",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/build-test/installed",
-        "RIMECLAW_BUILD_TEST": "ON",
-        "RIMECLAW_BUILD_DASHBOARD": "OFF"
+        "BUILD_TEST": "ON",
+        "BUILD_DASHBOARD": "OFF"
       }
     },
     {
@@ -50,10 +49,9 @@
       "inherits": "base",
       "binaryDir": "${sourceDir}/build-dashboard",
       "cacheVariables": {
-        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-dashboard",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/build-dashboard/installed",
-        "RIMECLAW_BUILD_TEST": "OFF",
-        "RIMECLAW_BUILD_DASHBOARD": "ON"
+        "BUILD_TEST": "OFF",
+        "BUILD_DASHBOARD": "ON"
       }
     },
     {
@@ -63,10 +61,9 @@
       "inherits": "base",
       "binaryDir": "${sourceDir}/build-all",
       "cacheVariables": {
-        "VCPKG_MANIFEST_DIR": "${sourceDir}/3rd/build-all",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/build-all/installed",
-        "RIMECLAW_BUILD_TEST": "ON",
-        "RIMECLAW_BUILD_DASHBOARD": "ON"
+        "BUILD_TEST": "ON",
+        "BUILD_DASHBOARD": "ON"
       }
     }
   ],

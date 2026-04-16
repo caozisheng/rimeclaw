@@ -27,7 +27,6 @@ endif()
 
 # nlohmann::json binary size optimization
 target_compile_definitions(librimeclaw PUBLIC
-    JSON_NOEXCEPTION
     JSON_NO_IO
     JSON_DISABLE_ENUM_SERIALIZATION=1
     NLOHMANN_JSON_NAMESPACE_NO_VERSION=1
