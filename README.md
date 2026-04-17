@@ -10,34 +10,25 @@ If you're looking for a light-weight, low-dependency, cross-platform C++ agent l
 
 **RimeClaw** is an **embedded agent library**—invoked by the host application via C ABI, with a complete core loop but without involving network, deployment, or multi-user functionality.
 
-RimeClaw is inspired and forked from [QuantClaw](https://github.com/QuantClaw/QuantClaw), which is a **standalone deployable agent service**—built on the same agent core, adding a Gateway (WS RPC, authentication, RBAC), CommandQueue (5 concurrency modes), Channel Adapters (Discord/Telegram subprocesses), Plugin Platform (24 hooks, Node.js sidecar), and Daemon lifecycle management, targeting production operations with multi-user and multi-channel scenarios.
-
-Comparison to QuantClaw is quickly shown as follows.
-
 ```text
-                    RimeClaw                          QuantClaw
-              ┌─────────────────┐          ┌──────────────────────────┐
-              │   C ABI facade  │          │    CLI / Web Dashboard   │
-              │  claw_init/send │          │    Gateway (WS RPC)      │
-              │  claw_shutdown  │          │    Channel Adapters      │
-              └───────┬─────────┘          └──────────┬───────────────┘
-                      │                               │
-              ┌───────┴─────────┐          ┌──────────┴───────────────┐
-              │   AgentLoop     │          │   CommandQueue           │
-              │   (same core)   │          │    → AgentLoop           │
-              └───────┬─────────┘          └──────────┬───────────────┘
-                      │                               │
-              ┌───────┴──────────────────────────────-┴───────────────┐
-              │    Kernel share (Provider/Tool/Session/Memory)        │
-			  │    llama_local_provider (RimeClaw)                    │
-              └───────────────────────────────────────────────────────┘
-                                          │  QuantClaw (only)
-                                ┌─────────┴─────────--─┐
-                                │  Plugin/Hook/Sidecar │
-                                │  RBAC/RateLimiter    │
-                                │  MCP                 │
-                                │  Daemon/Service      │
-                                └──────────────────────┘
+      ┌─────────────────┐
+      │   C ABI facade  │
+      │  claw_init/send │
+      │  claw_shutdown  │
+      └───────┬─────────┘
+              │          
+  ┌─────────────────────────────┐
+  │        Agent Loop           │  ← main loop drives LLM inferrence + tool calling
+  ├─────────────────────────────┤
+  │     Context Engine          │  ← context build/compress/trim
+  ├─────────────────────────────┤
+  │    Provider Registry        │  ← multi Provider registry/parser/factory
+  ├──────────┬──────────────────┤
+  │ Failover │  Cooldown        │  ← Failover + cooldown
+  │ Resolver │  Tracker         │
+  ├──────────┴──────────────────┤
+  │  LLM Providers              │  ← Anthropic / OpenAI / Ollama / Local(llama.cpp)
+  └─────────────────────────────┘
 ```
 
 ## Overview
@@ -108,7 +99,7 @@ To build from source,
 ```
 cd rimeclaw
 ```
-   
+
 1. install vcpkg and set $ENV{VCPKG_ROOT}
    
    ```
@@ -125,7 +116,7 @@ cd rimeclaw
    ```
 
 3. config providers
-
+   
    ```
    "providers": {
        "minimax": {
@@ -135,27 +126,25 @@ cd rimeclaw
          "timeout": 30
        },
        ...
-    ```
+   ```
 
 4. Put local models inside 3rd/models
-
-    ```
-    "local": {
-          "api": "local",
-          "extra": {
-            "model_path": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
-            "n_ctx": 4096,
-            "n_gpu_layers": 0,
-            "n_threads": 0,
-            "n_batch": 512
-          }
-        }
-    ```
-
+   
+   ```
+   "local": {
+         "api": "local",
+         "extra": {
+           "model_path": "models/Qwen3.5-0.8B-Q4_K_M.gguf",
+           "n_ctx": 4096,
+           "n_gpu_layers": 0,
+           "n_threads": 0,
+           "n_batch": 512
+         }
+       }
+   ```
 - [Qwen2.5-0.5B-Instruct-Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf)
 
 - [Qwen3.5-0.8B-Q4_K_M](https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf)
-
 4. build
    
    ```
@@ -171,8 +160,8 @@ cd rimeclaw
    ├── .rimeclaw/
    └── models/
    ```
- 
-   ``` 
+   
+   ```
    cd Rimeclaw-output-binary-folder 
    ./test
    ```
