@@ -97,6 +97,20 @@ static std::string truncate_tool_result(const std::string& result,
   return truncated;
 }
 
+// Detect repeating cycles of a given period in recent tool call signatures.
+// Returns true when the last (period * threshold) entries form a repeating pattern.
+// period=1 catches A,A,A; period=2 catches A,B,A,B,A,B.
+static bool detect_tool_cycle(const std::vector<std::string>& sigs,
+                              int period, int threshold) {
+  int needed = period * threshold;
+  if (static_cast<int>(sigs.size()) < needed) return false;
+  int start = static_cast<int>(sigs.size()) - needed;
+  for (int i = start + period; i < static_cast<int>(sigs.size()); i++) {
+    if (sigs[i] != sigs[start + (i - start) % period]) return false;
+  }
+  return true;
+}
+
 // Get context window size for a model name
 static int get_context_window(const std::string& model) {
   // Anthropic models
@@ -226,8 +240,7 @@ std::vector<Message> AgentLoop::ProcessMessage(
 
   int iterations = 0;
   int overflow_retries = 0;
-  std::string last_tool_call_sig;
-  int repeat_tool_count = 0;
+  std::vector<std::string> recent_tool_sigs;
 
   while (iterations < max_iterations_ && !stop_requested_) {
     try {
@@ -293,27 +306,23 @@ std::vector<Message> AgentLoop::ProcessMessage(
         request.messages.push_back(results_msg);
         new_messages.push_back(results_msg);
 
-        // --- Repeat tool call detection ---
+        // --- Repeat / cycle detection ---
         std::string sig;
         for (const auto& tc : valid_tool_calls) {
           sig += tc.name + ":" + tc.arguments.dump() + ";";
         }
-        if (sig == last_tool_call_sig) {
-          repeat_tool_count++;
-          if (repeat_tool_count >= kMaxRepeatToolCalls) {
-            spdlog::warn("Detected {} consecutive identical tool calls, "
-                         "breaking loop", repeat_tool_count);
-            Message stop_msg;
-            stop_msg.role = "assistant";
-            stop_msg.content.push_back(ContentBlock::MakeText(
-                "I seem to be stuck repeating the same action. Let me stop "
-                "and reconsider."));
-            new_messages.push_back(stop_msg);
-            return new_messages;
-          }
-        } else {
-          last_tool_call_sig = sig;
-          repeat_tool_count = 1;
+        recent_tool_sigs.push_back(sig);
+        if (detect_tool_cycle(recent_tool_sigs, 1, kMaxRepeatToolCalls) ||
+            detect_tool_cycle(recent_tool_sigs, 2, kMaxRepeatToolCalls)) {
+          spdlog::warn("Detected repeating tool call cycle ({} sigs), "
+                       "breaking loop", recent_tool_sigs.size());
+          Message stop_msg;
+          stop_msg.role = "assistant";
+          stop_msg.content.push_back(ContentBlock::MakeText(
+              "I seem to be stuck repeating the same action. Let me stop "
+              "and reconsider."));
+          new_messages.push_back(stop_msg);
+          return new_messages;
         }
 
         iterations++;
@@ -479,8 +488,7 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
 
   int iterations = 0;
   int overflow_retries_stream = 0;
-  std::string last_tool_call_sig_stream;
-  int repeat_tool_count_stream = 0;
+  std::vector<std::string> recent_tool_sigs_stream;
 
   while (iterations < max_iterations_ && !stop_requested_) {
     try {
@@ -612,29 +620,26 @@ std::vector<Message> AgentLoop::ProcessMessageStream(
       }
 
       if (handled_tool_calls) {
-        // --- Repeat tool call detection (streaming) ---
-        if (stream_tool_sig == last_tool_call_sig_stream) {
-          repeat_tool_count_stream++;
-          if (repeat_tool_count_stream >= kMaxRepeatToolCalls) {
-            spdlog::warn("Detected {} consecutive identical tool calls "
-                         "(streaming), breaking loop", repeat_tool_count_stream);
-            if (callback) {
-              callback({"message_end",
-                        {{"content",
-                          "I seem to be stuck repeating the same action. "
-                          "Let me stop and reconsider."}}});
-            }
-            Message stop_msg;
-            stop_msg.role = "assistant";
-            stop_msg.content.push_back(ContentBlock::MakeText(
-                "I seem to be stuck repeating the same action. Let me stop "
-                "and reconsider."));
-            new_messages.push_back(stop_msg);
-            return new_messages;
+        // --- Repeat / cycle detection (streaming) ---
+        recent_tool_sigs_stream.push_back(stream_tool_sig);
+        if (detect_tool_cycle(recent_tool_sigs_stream, 1, kMaxRepeatToolCalls) ||
+            detect_tool_cycle(recent_tool_sigs_stream, 2, kMaxRepeatToolCalls)) {
+          spdlog::warn("Detected repeating tool call cycle "
+                       "(streaming, {} sigs), breaking loop",
+                       recent_tool_sigs_stream.size());
+          if (callback) {
+            callback({"message_end",
+                      {{"content",
+                        "I seem to be stuck repeating the same action. "
+                        "Let me stop and reconsider."}}});
           }
-        } else {
-          last_tool_call_sig_stream = stream_tool_sig;
-          repeat_tool_count_stream = 1;
+          Message stop_msg;
+          stop_msg.role = "assistant";
+          stop_msg.content.push_back(ContentBlock::MakeText(
+              "I seem to be stuck repeating the same action. Let me stop "
+              "and reconsider."));
+          new_messages.push_back(stop_msg);
+          return new_messages;
         }
 
         iterations++;
