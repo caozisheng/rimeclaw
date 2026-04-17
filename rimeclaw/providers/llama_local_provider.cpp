@@ -183,10 +183,13 @@ std::string LlamaLocalProvider::FormatToolsForSystemPrompt(
   }
   block += "</tools>\n\n";
   block += "For each function call, return a json object with function name "
-           "and arguments within <tool_call></tool_call> XML tags:\n";
+           "and arguments within <tool_call></tool_call> XML tags.\n"
+           "IMPORTANT: \"name\" must be one of the tool names listed above. "
+           "Do NOT use \"function_name\" as the name.\n"
+           "Example:\n";
   block += "<tool_call>\n";
-  block += "{\"name\": \"function_name\", \"arguments\": {\"arg1\": "
-           "\"value1\"}}\n";
+  block += "{\"name\": \"exec\", \"arguments\": {\"command\": "
+           "\"echo hello\"}}\n";
   block += "</tool_call>";
   return block;
 }
@@ -518,91 +521,150 @@ LlamaLocalProvider::ParseToolCalls(const std::string& output) const {
       }
     } catch (const nlohmann::json::exception& e) {
       // Fallback: small models sometimes produce JSON with unescaped
-      // quotes inside string values (e.g. bash commands with nested
-      // quotes).  Try to extract "name" via simple string search and
-      // treat the rest as a single string argument.
+      // control characters, missing closing braces, or nested-arguments
+      // quirks.  Try progressively more aggressive fixups before giving up.
       spdlog::warn("LlamaLocalProvider: strict JSON parse failed, "
                    "attempting fallback extraction: {}", e.what());
 
-      // Extract "name":"<value>"
-      auto extract_field = [&](const std::string& field) -> std::string {
-        std::string pattern = "\"" + field + "\"";
-        auto pos = json_str.find(pattern);
-        if (pos == std::string::npos) return "";
-        pos = json_str.find('"', pos + pattern.size());
-        if (pos == std::string::npos) return "";
-        // Skip colon and whitespace between key and value
-        auto colon = json_str.find(':', pos - pattern.size() + pattern.size());
-        if (colon == std::string::npos) return "";
-        auto vstart = json_str.find('"', colon + 1);
-        if (vstart == std::string::npos) return "";
-        vstart++;
-        // Find closing quote (not preceded by backslash)
-        auto vend = vstart;
-        while (vend < json_str.size()) {
-          if (json_str[vend] == '"' &&
-              (vend == 0 || json_str[vend - 1] != '\\')) {
-            break;
-          }
-          vend++;
+      // --- Phase 1: sanitise common issues and re-parse ----------------
+      // Escape unescaped control characters (LF, CR, TAB) inside strings.
+      std::string sanitised;
+      sanitised.reserve(json_str.size() + 32);
+      bool in_string = false;
+      for (size_t i = 0; i < json_str.size(); ++i) {
+        char c = json_str[i];
+        if (c == '"' && (i == 0 || json_str[i - 1] != '\\')) {
+          in_string = !in_string;
+          sanitised += c;
+        } else if (in_string && (c == '\n' || c == '\r' || c == '\t')) {
+          sanitised += (c == '\n') ? "\\n" : (c == '\r') ? "\\r" : "\\t";
+        } else {
+          sanitised += c;
         }
-        return json_str.substr(vstart, vend - vstart);
-      };
+      }
+      // Balance braces: count open/close and append missing '}'
+      {
+        int depth = 0;
+        for (char c : sanitised) {
+          if (c == '{') ++depth;
+          else if (c == '}') --depth;
+        }
+        while (depth > 0) { sanitised += '}'; --depth; }
+      }
 
-      // Simpler approach: find "name":"..." then grab everything after
-      // the first comma as a flat argument blob.
-      std::string name_pattern = "\"name\"";
-      auto npos = json_str.find(name_pattern);
-      if (npos != std::string::npos) {
-        // Find the value after "name":
-        auto colon = json_str.find(':', npos + name_pattern.size());
-        if (colon != std::string::npos) {
-          auto q1 = json_str.find('"', colon + 1);
-          if (q1 != std::string::npos) {
-            auto q2 = json_str.find('"', q1 + 1);
-            if (q2 != std::string::npos) {
-              std::string name = json_str.substr(q1 + 1, q2 - q1 - 1);
+      bool parsed_ok = false;
+      try {
+        auto j2 = nlohmann::json::parse(sanitised);
+        ToolCall tc;
+        tc.id = "local_call_" + std::to_string(call_idx++);
+        tc.name = j2.value("name", "");
+        if (j2.contains("arguments") && j2["arguments"].is_object()) {
+          tc.arguments = j2["arguments"];
+        } else {
+          nlohmann::json args = nlohmann::json::object();
+          for (auto it = j2.begin(); it != j2.end(); ++it) {
+            if (it.key() != "name") args[it.key()] = it.value();
+          }
+          tc.arguments = args;
+        }
+        if (!tc.name.empty()) {
+          spdlog::info("LlamaLocalProvider: fallback sanitise+reparse OK: "
+                      "name='{}', args={}", tc.name, tc.arguments.dump());
+          calls.push_back(std::move(tc));
+          parsed_ok = true;
+        }
+      } catch (...) { /* phase 1 failed, continue to phase 2 */ }
 
-              // Find the next key after name — grab its key and value
-              // as a single string argument
-              ToolCall tc;
-              tc.id = "local_call_" + std::to_string(call_idx++);
-              tc.name = name;
+      // --- Phase 2: string-level extraction (last resort) --------------
+      if (!parsed_ok) {
+        std::string name_pattern = "\"name\"";
+        auto npos = json_str.find(name_pattern);
+        if (npos != std::string::npos) {
+          auto colon = json_str.find(':', npos + name_pattern.size());
+          if (colon != std::string::npos) {
+            auto q1 = json_str.find('"', colon + 1);
+            if (q1 != std::string::npos) {
+              auto q2 = json_str.find('"', q1 + 1);
+              if (q2 != std::string::npos) {
+                std::string name = json_str.substr(q1 + 1, q2 - q1 - 1);
+                ToolCall tc;
+                tc.id = "local_call_" + std::to_string(call_idx++);
+                tc.name = name;
 
-              // Try to find "command":"..." or other key
-              auto comma = json_str.find(',', q2);
-              if (comma != std::string::npos) {
-                // Find key
-                auto kq1 = json_str.find('"', comma + 1);
-                if (kq1 != std::string::npos) {
-                  auto kq2 = json_str.find('"', kq1 + 1);
-                  if (kq2 != std::string::npos) {
-                    std::string key = json_str.substr(kq1 + 1, kq2 - kq1 - 1);
-                    // Get everything between the next colon+" and the
-                    // last " before }
-                    auto vcolon = json_str.find(':', kq2);
-                    if (vcolon != std::string::npos) {
-                      auto vq1 = json_str.find('"', vcolon + 1);
-                      auto closing_brace = json_str.rfind('}');
-                      auto vq2 = (closing_brace != std::string::npos)
-                                     ? json_str.rfind('"', closing_brace)
-                                     : json_str.rfind('"');
-                      if (vq1 != std::string::npos && vq2 != std::string::npos &&
-                          vq2 > vq1) {
-                        std::string val =
-                            json_str.substr(vq1 + 1, vq2 - vq1 - 1);
-                        tc.arguments = {{key, val}};
+                // Try to find "arguments":{...} and extract inner content
+                auto args_pos = json_str.find("\"arguments\"", q2);
+                if (args_pos != std::string::npos) {
+                  auto brace = json_str.find('{', args_pos);
+                  if (brace != std::string::npos) {
+                    // Find matching close brace (simple depth count)
+                    int depth = 1;
+                    size_t end = brace + 1;
+                    while (end < json_str.size() && depth > 0) {
+                      if (json_str[end] == '{') ++depth;
+                      else if (json_str[end] == '}') --depth;
+                      ++end;
+                    }
+                    std::string inner =
+                        json_str.substr(brace, end - brace);
+                    // Escape control chars and balance braces
+                    std::string fixed;
+                    for (char c : inner) {
+                      if (c == '\n') fixed += "\\n";
+                      else if (c == '\r') fixed += "\\r";
+                      else if (c == '\t') fixed += "\\t";
+                      else fixed += c;
+                    }
+                    {
+                      int d = 0;
+                      for (char c : fixed) {
+                        if (c == '{') ++d;
+                        else if (c == '}') --d;
+                      }
+                      while (d > 0) { fixed += '}'; --d; }
+                    }
+                    try {
+                      tc.arguments = nlohmann::json::parse(fixed);
+                    } catch (...) { /* leave arguments empty */ }
+                  }
+                }
+
+                // If arguments still empty, try flat key extraction
+                if (tc.arguments.empty() || tc.arguments.is_null()) {
+                  auto comma = json_str.find(',', q2);
+                  if (comma != std::string::npos) {
+                    auto kq1 = json_str.find('"', comma + 1);
+                    if (kq1 != std::string::npos) {
+                      auto kq2 = json_str.find('"', kq1 + 1);
+                      if (kq2 != std::string::npos) {
+                        std::string key =
+                            json_str.substr(kq1 + 1, kq2 - kq1 - 1);
+                        if (key != "arguments") {
+                          auto vcolon = json_str.find(':', kq2);
+                          if (vcolon != std::string::npos) {
+                            auto vq1 = json_str.find('"', vcolon + 1);
+                            auto closing = json_str.rfind('}');
+                            auto vq2 = (closing != std::string::npos)
+                                            ? json_str.rfind('"', closing)
+                                            : json_str.rfind('"');
+                            if (vq1 != std::string::npos &&
+                                vq2 != std::string::npos && vq2 > vq1) {
+                              std::string val =
+                                  json_str.substr(vq1 + 1, vq2 - vq1 - 1);
+                              tc.arguments = {{key, val}};
+                            }
+                          }
+                        }
                       }
                     }
                   }
                 }
-              }
 
               if (!tc.name.empty()) {
                 spdlog::info("LlamaLocalProvider: fallback extracted tool "
                              "call: name='{}', args={}", tc.name,
                              tc.arguments.dump());
                 calls.push_back(std::move(tc));
+                }
               }
             }
           }

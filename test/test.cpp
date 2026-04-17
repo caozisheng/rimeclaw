@@ -532,7 +532,7 @@ static void test_skill_calc_py() {
 	printf("  Prompt: calculate 89*97 using Python\n  Assistant: ");
 	int rc = claw_send_msg(h, sess.c_str(),
 		"Calculate 89 * 97 using the exec tool with Python. "
-		"Run: python -c \"print(89*97)\". Do NOT set workdir.",
+		"Run: python3 -c \"print(89*97)\". Do NOT set workdir.",
 		stream_callback, &state);
 
 	EXPECT_EQ(rc, 0);

@@ -165,8 +165,7 @@ OpenAIProvider::ChatCompletion(const ChatCompletionRequest& request) {
     }
   }
 
-  std::string json_payload = payload.dump(-1, ' ', false,
-                                          nlohmann::json::error_handler_t::replace);
+  std::string json_payload = payload.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
   spdlog::debug("Sending request to OpenAI API: {}", json_payload);
 
   std::string response = MakeApiRequest(json_payload);
@@ -421,8 +420,7 @@ void OpenAIProvider::ChatCompletionStream(
     }
   }
 
-  std::string json_payload = payload.dump(-1, ' ', false,
-                                          nlohmann::json::error_handler_t::replace);
+  std::string json_payload = payload.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
   spdlog::debug("Sending streaming request to OpenAI API");
 
   StreamContext stream_ctx;
