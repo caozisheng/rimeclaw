@@ -1,6 +1,6 @@
 # RimeClaw
 
-An embedded claw library by c++, forked and simplified from [QuantClaw](https://github.com/QuantClaw/QuantClaw).
+An embedded claw library by c++, forked and modified from [QuantClaw](https://github.com/QuantClaw/QuantClaw).
 
 RimeClaw supports Anthropic compatible providers, OpenAI compatible providers and local providers of .GGUF models via llama.cpp.
 
